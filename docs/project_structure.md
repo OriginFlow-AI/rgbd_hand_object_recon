@@ -13,6 +13,7 @@ rgbd_hand_object_recon/
     hand_reconstruction_sop.md
     kr_delivery_submission_guideline.md
     mock_rgbd_io_schema.md
+    multi_agent_closed_loop_task.md
     project_structure.md
     reconstruction_accuracy_closed_loop.md
     root_translation_optimized_hands_npz_schema.md

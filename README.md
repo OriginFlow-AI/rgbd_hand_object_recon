@@ -31,6 +31,7 @@ python3 scripts/run_icp_registration.py --selftest
 - `root_translation_optimized_hands.npz` 字段说明见 [docs/root_translation_optimized_hands_npz_schema.md](docs/root_translation_optimized_hands_npz_schema.md)。
 - 重建精度闭环方案见 [docs/reconstruction_accuracy_closed_loop.md](docs/reconstruction_accuracy_closed_loop.md)。
 - KR 提交交付规范见 [docs/kr_delivery_submission_guideline.md](docs/kr_delivery_submission_guideline.md)。
+- 多智能体协同和一次性闭环任务指令见 [docs/multi_agent_closed_loop_task.md](docs/multi_agent_closed_loop_task.md)。
 - gitee 初始化/同步步骤见 [docs/gitee_sync.md](docs/gitee_sync.md)。
 - `data/`、`outputs/` 和自动生成的 `mock_data/rgbd_scene_001/` 不提交到代码仓库。
 - `.gitignore` 已配置真实大数据、生成结果、虚拟环境和 Python 缓存。
