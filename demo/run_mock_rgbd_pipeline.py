@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from hand_recon.evaluation import evaluate_quality  # noqa: E402
 from hand_recon.icp import write_ascii_ply  # noqa: E402
 from hand_recon.mock_data import LABEL_HAND, LABEL_OBJECT, generate_mock_rgbd_scene  # noqa: E402
+from hand_recon.normalized_output import build_normalized_hand_npz_payload, write_normalized_hand_npz  # noqa: E402
 from hand_recon.pose import generate_pose_output  # noqa: E402
 from hand_recon.reconstruction import reconstruct_multiview_pointcloud  # noqa: E402
 from hand_recon.rgbd import load_mock_rgbd_scene  # noqa: E402
@@ -25,6 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scene-dir", type=Path, default=ROOT / "mock_data" / "rgbd_scene_001")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "outputs" / "mock_rgbd_demo")
     parser.add_argument("--voxel-size-m", type=float, default=0.003)
+    parser.add_argument("--hand-side", choices=["left", "right"], default="right")
     parser.add_argument("--overwrite-mock-data", action="store_true")
     return parser.parse_args()
 
@@ -58,6 +60,7 @@ def main() -> int:
         "pose_output": args.output_dir / "pose_output.json",
         "quality_report": args.output_dir / "quality_report.json",
         "summary": args.output_dir / "summary.json",
+        "root_translation_optimized_hands": args.output_dir / "scale" / "root_translation_optimized_hands.npz",
     }
 
     write_ascii_ply(output_paths["fused_pointcloud"], fused_result.fused_points)
@@ -75,12 +78,19 @@ def main() -> int:
 
     _write_json(output_paths["pose_output"], pose_output)
     _write_json(output_paths["quality_report"], quality_report)
+    normalized_payload = build_normalized_hand_npz_payload(
+        scene,
+        hand_result.fused_points,
+        frame_index=0,
+        is_right=args.hand_side == "right",
+    )
+    write_normalized_hand_npz(output_paths["root_translation_optimized_hands"], normalized_payload)
 
     summary = {
         "status": "ok" if quality_report["passed"] else "failed",
         "scene_dir": str(args.scene_dir),
         "output_dir": str(args.output_dir),
-        "parameters": {"voxel_size_m": args.voxel_size_m},
+        "parameters": {"voxel_size_m": args.voxel_size_m, "hand_side": args.hand_side},
         "outputs": {key: str(value) for key, value in output_paths.items()},
         "per_view_stats": fused_result.per_view_stats,
         "quality_passed": bool(quality_report["passed"]),

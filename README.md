@@ -28,6 +28,9 @@ python3 scripts/run_icp_registration.py --selftest
 
 - 目录职责见 [docs/project_structure.md](docs/project_structure.md)。
 - mock RGB-D 输入输出格式见 [docs/mock_rgbd_io_schema.md](docs/mock_rgbd_io_schema.md)。
+- `root_translation_optimized_hands.npz` 字段说明见 [docs/root_translation_optimized_hands_npz_schema.md](docs/root_translation_optimized_hands_npz_schema.md)。
+- 重建精度闭环方案见 [docs/reconstruction_accuracy_closed_loop.md](docs/reconstruction_accuracy_closed_loop.md)。
+- KR 提交交付规范见 [docs/kr_delivery_submission_guideline.md](docs/kr_delivery_submission_guideline.md)。
 - gitee 初始化/同步步骤见 [docs/gitee_sync.md](docs/gitee_sync.md)。
 - `data/`、`outputs/` 和自动生成的 `mock_data/rgbd_scene_001/` 不提交到代码仓库。
 - `.gitignore` 已配置真实大数据、生成结果、虚拟环境和 Python 缓存。
@@ -85,8 +88,18 @@ python3 demo/run_mock_rgbd_pipeline.py --output-dir outputs/mock_rgbd_demo
 - `outputs/mock_rgbd_demo/pose_output.json`
 - `outputs/mock_rgbd_demo/quality_report.json`
 - `outputs/mock_rgbd_demo/summary.json`
+- `outputs/mock_rgbd_demo/scale/root_translation_optimized_hands.npz`
+- `outputs/mock_rgbd_demo/scale/accuracy_report.json`（运行精度闭环脚本后生成）
 
 mock RGB-D 输入输出 schema 见 [docs/mock_rgbd_io_schema.md](docs/mock_rgbd_io_schema.md)。
+
+精度闭环：
+
+```bash
+python3 scripts/evaluate_normalized_npz_accuracy.py \
+  --prediction-npz outputs/mock_rgbd_demo/scale/root_translation_optimized_hands.npz \
+  --output-json outputs/mock_rgbd_demo/scale/accuracy_report.json
+```
 
 测试：
 

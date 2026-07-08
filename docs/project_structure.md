@@ -11,19 +11,24 @@ rgbd_hand_object_recon/
     run_mock_rgbd_pipeline.py
   docs/
     hand_reconstruction_sop.md
+    kr_delivery_submission_guideline.md
     mock_rgbd_io_schema.md
     project_structure.md
+    reconstruction_accuracy_closed_loop.md
+    root_translation_optimized_hands_npz_schema.md
     gitee_sync.md
   mock_data/
     .gitkeep
   scripts/
     create_upload_package.sh
+    evaluate_normalized_npz_accuracy.py
     prepare_reinterhand_pilot.py
     run_icp_registration.py
     run_kr1_checks.sh
   src/
     hand_recon/
       icp.py
+      normalized_output.py
       mock_data.py
       rgbd.py
       reconstruction.py

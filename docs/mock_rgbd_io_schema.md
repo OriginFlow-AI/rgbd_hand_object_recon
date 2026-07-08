@@ -86,6 +86,8 @@ outputs/mock_rgbd_demo/
   pose_output.json
   quality_report.json
   summary.json
+  scale/
+    root_translation_optimized_hands.npz
 ```
 
 `pose_output.json` uses world-frame mock poses:
@@ -125,6 +127,13 @@ outputs/mock_rgbd_demo/
 - mean pose confidence
 - pass/fail flag and warnings
 
+`scale/root_translation_optimized_hands.npz` follows
+[root_translation_optimized_hands.npz 字段说明](root_translation_optimized_hands_npz_schema.md).
+For the KR1 mock demo, WiLoR/stereo optimizer row fields use `-1`
+placeholders, orientation residual is zero, and the 21 hand joints are
+deterministic geometric landmarks estimated from the reconstructed hand point
+cloud in the first camera coordinate frame.
+
 ## Demo Command
 
 ```bash
@@ -138,5 +147,10 @@ python3 demo/run_mock_rgbd_pipeline.py \
   --scene-dir mock_data/rgbd_scene_001 \
   --output-dir outputs/mock_rgbd_demo \
   --voxel-size-m 0.003 \
+  --hand-side left \
   --overwrite-mock-data
 ```
+
+Use `--hand-side left` to write a left-hand normalized NPZ
+(`hand_side=0`, `is_right=False`). Use `--hand-side right` for right hand
+(`hand_side=1`, `is_right=True`).
