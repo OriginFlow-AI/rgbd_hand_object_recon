@@ -88,6 +88,8 @@ outputs/mock_rgbd_demo/
   summary.json
   scale/
     root_translation_optimized_hands.npz
+  kr3/
+    hand_result.npz
 ```
 
 `pose_output.json` uses world-frame mock poses:
@@ -133,6 +135,11 @@ For the KR1 mock demo, WiLoR/stereo optimizer row fields use `-1`
 placeholders, orientation residual is zero, and the 21 hand joints are
 deterministic geometric landmarks estimated from the reconstructed hand point
 cloud in the first camera coordinate frame.
+
+`kr3/hand_result.npz` follows
+[KR3 手部结果数据接口与架构预留](kr3_hand_result_interface.md). It adapts the
+mock normalized hand result into a unified hand interface with 22DoF angles,
+21 3D joints, mesh vertices/faces, and MANO/UmeTrack optional placeholders.
 
 ## Demo Command
 

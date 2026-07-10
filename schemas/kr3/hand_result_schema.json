@@ -1,0 +1,221 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://originflow.ai/schemas/kr3/hand_result_schema.json",
+  "title": "KR3 Unified Hand Result NPZ Payload",
+  "description": "Shape-oriented schema for the KR3 reserved hand-result interface shared by the ground-truth system, DMA pure vision, and multi-modal super-labelator adapters.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "source_system",
+    "frame_index",
+    "timestamp_ns",
+    "track_id",
+    "hand_side",
+    "is_right",
+    "coordinate_frame",
+    "wrist_pose_6d_m_rad",
+    "hand_angles_22dof_rad",
+    "hand_angles_22dof_deg",
+    "hand_angle_names_22dof",
+    "hand_angle_convention",
+    "joint_names",
+    "joints_3d_m",
+    "valid_joint_mask",
+    "mesh_vertices_m",
+    "mesh_faces",
+    "mesh_vertex_valid_mask",
+    "mesh_model",
+    "mesh_topology_id",
+    "frame_confidence",
+    "frame_status",
+    "provenance_json"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "kr3_hand_result_v0.1",
+      "x-npz-shape": "scalar"
+    },
+    "source_system": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "ground_truth_system",
+          "dma_vision",
+          "super_labelator"
+        ]
+      },
+      "x-npz-dtype": "unicode",
+      "x-npz-shape": ["N"]
+    },
+    "frame_index": {
+      "type": "array",
+      "items": {"type": "integer"},
+      "x-npz-dtype": "int64",
+      "x-npz-shape": ["N"]
+    },
+    "timestamp_ns": {
+      "type": "array",
+      "items": {"type": "integer"},
+      "x-npz-dtype": "int64",
+      "x-npz-shape": ["N"]
+    },
+    "track_id": {
+      "type": "array",
+      "items": {"type": "string"},
+      "x-npz-dtype": "unicode",
+      "x-npz-shape": ["N"]
+    },
+    "hand_side": {
+      "type": "array",
+      "items": {"enum": [0, 1]},
+      "x-npz-dtype": "int64",
+      "x-npz-shape": ["N"],
+      "description": "0 = left hand, 1 = right hand."
+    },
+    "is_right": {
+      "type": "array",
+      "items": {"type": "boolean"},
+      "x-npz-dtype": "bool",
+      "x-npz-shape": ["N"]
+    },
+    "coordinate_frame": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "rectified_left_camera",
+          "world",
+          "camera",
+          "wrist_local"
+        ]
+      },
+      "x-npz-dtype": "unicode",
+      "x-npz-shape": ["N"]
+    },
+    "wrist_pose_6d_m_rad": {
+      "type": "array",
+      "x-npz-dtype": "float64",
+      "x-npz-shape": ["N", 6],
+      "description": "[x, y, z, rx, ry, rz], position in meters and rotation vector in radians."
+    },
+    "hand_angles_22dof_rad": {
+      "type": "array",
+      "x-npz-dtype": "float64",
+      "x-npz-shape": ["N", 22]
+    },
+    "hand_angles_22dof_deg": {
+      "type": "array",
+      "x-npz-dtype": "float64",
+      "x-npz-shape": ["N", 22]
+    },
+    "hand_angle_names_22dof": {
+      "type": "array",
+      "items": {"type": "string"},
+      "x-npz-dtype": "unicode",
+      "x-npz-shape": [22]
+    },
+    "hand_angle_convention": {
+      "type": "string",
+      "const": "umetrack_compatible_v0",
+      "x-npz-shape": "scalar"
+    },
+    "joint_names": {
+      "type": "array",
+      "items": {"type": "string"},
+      "x-npz-dtype": "unicode",
+      "x-npz-shape": [21]
+    },
+    "joints_3d_m": {
+      "type": "array",
+      "x-npz-dtype": "float64",
+      "x-npz-shape": ["N", 21, 3]
+    },
+    "valid_joint_mask": {
+      "type": "array",
+      "x-npz-dtype": "bool",
+      "x-npz-shape": ["N", 21]
+    },
+    "mesh_vertices_m": {
+      "type": "array",
+      "x-npz-dtype": "float64",
+      "x-npz-shape": ["N", "V", 3],
+      "description": "Hand mesh vertices in meters. MANO commonly uses V=778; UmeTrack or reconstructed meshes may use another topology."
+    },
+    "mesh_faces": {
+      "type": "array",
+      "x-npz-dtype": "int64",
+      "x-npz-shape": ["F", 3]
+    },
+    "mesh_vertex_valid_mask": {
+      "type": "array",
+      "x-npz-dtype": "bool",
+      "x-npz-shape": ["N", "V"]
+    },
+    "mesh_model": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "umetrack",
+          "mano",
+          "hybrid",
+          "mock",
+          "unknown"
+        ]
+      },
+      "x-npz-dtype": "unicode",
+      "x-npz-shape": ["N"]
+    },
+    "mesh_topology_id": {
+      "type": "string",
+      "x-npz-shape": "scalar",
+      "description": "Stable identifier for face topology, such as mano_v1_778 or umetrack_runtime_model."
+    },
+    "frame_confidence": {
+      "type": "array",
+      "items": {"type": "number"},
+      "x-npz-dtype": "float64",
+      "x-npz-shape": ["N"]
+    },
+    "frame_status": {
+      "type": "array",
+      "items": {"enum": ["ok", "invalid", "review_needed"]},
+      "x-npz-dtype": "unicode",
+      "x-npz-shape": ["N"]
+    },
+    "provenance_json": {
+      "type": "array",
+      "items": {"type": "string"},
+      "x-npz-dtype": "object",
+      "x-npz-shape": ["N"]
+    },
+    "mano_pose_axis_angle": {
+      "type": "array",
+      "x-npz-dtype": "float64",
+      "x-npz-shape": ["N", 48],
+      "description": "Optional MANO pose in axis-angle format."
+    },
+    "mano_shape_betas": {
+      "type": "array",
+      "x-npz-dtype": "float64",
+      "x-npz-shape": ["N", 10],
+      "description": "Optional MANO shape betas."
+    },
+    "mano_global_orient": {
+      "type": "array",
+      "x-npz-dtype": "float64",
+      "x-npz-shape": ["N", 3]
+    },
+    "mano_transl_m": {
+      "type": "array",
+      "x-npz-dtype": "float64",
+      "x-npz-shape": ["N", 3]
+    },
+    "umetrack_joint_angles_rad": {
+      "type": "array",
+      "x-npz-dtype": "float64",
+      "x-npz-shape": ["N", 22],
+      "description": "Optional copy or native UmeTrack-style 22-DoF angles."
+    }
+  },
+  "additionalProperties": true
+}

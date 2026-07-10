@@ -220,3 +220,20 @@ stereo_sparse_triangulation
 stereo_shared_scale_optimizer
 -> root translation / global orient residual / final 3D joints / angle fields
 ```
+
+## KR3 扩展接口
+
+本文档描述当前稳定流程的 `root_translation_optimized_hands.npz`。KR3 面向真值系统、DMA 纯视觉和多模态 super-labelator 的统一手部结果接口另见：
+
+```text
+docs/kr3_hand_result_interface.md
+schemas/kr3/hand_result_schema.json
+src/hand_recon/interfaces/hand_result.py
+```
+
+KR3 主接口在本文件基础上补充：
+
+- `hand_angles_22dof_*`：UmeTrack-compatible 22DOF 主字段。
+- `joints_3d_m`：统一 21 个 3D 关键点字段。
+- `mesh_vertices_m` / `mesh_faces`：手部 mesh 结果。
+- MANO 与 UmeTrack optional 字段。

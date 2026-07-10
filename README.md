@@ -1,6 +1,35 @@
 # RGB-D Hand/Object Reconstruction
 
-本工程用于把 DexYCB 三维重建思路迁移到“更多视角覆盖”的手部数据上。当前先完成第一阶段：数据集选型、mock RGB-D 闭环和 ICP 刚体配准脚手架。
+本工程用于把 DexYCB 三维重建思路迁移到“更多视角覆盖”的手部数据上。当前已经从实验脚本整理为可集成的 Python package：核心能力在 `src/hand_recon/`，脚本只作为 CLI/验收包装。
+
+## 软件集成入口
+
+后续软件系统优先使用稳定 API，不直接依赖 `scripts/`：
+
+```python
+from pathlib import Path
+
+from hand_recon import (
+    generate_mock_visual_report,
+    load_hand_result_npz,
+    run_mock_reconstruction,
+    validate_hand_result,
+)
+
+result = run_mock_reconstruction(
+    scene_dir=Path("mock_data/rgbd_scene_001"),
+    output_dir=Path("outputs/mock_rgbd_demo"),
+    hand_side="right",
+)
+hand_result = load_hand_result_npz(result.output_paths["kr3_hand_result"])
+assert validate_hand_result(hand_result) == []
+generate_mock_visual_report(
+    demo_dir=result.output_dir,
+    output_html=Path("outputs/reports/hand_reconstruction_visual_report.html"),
+)
+```
+
+详细说明见 [docs/integration/software_integration.md](docs/integration/software_integration.md)，迁移说明见 [docs/integration/migration_to_software_module.md](docs/integration/migration_to_software_module.md)。
 
 ## 快速开始
 
@@ -27,14 +56,33 @@ python3 scripts/run_icp_registration.py --selftest
 ## 工程规范
 
 - 目录职责见 [docs/project_structure.md](docs/project_structure.md)。
+- 软件集成说明见 [docs/integration/software_integration.md](docs/integration/software_integration.md)。
+- 从实验脚本到软件模块的迁移说明见 [docs/integration/migration_to_software_module.md](docs/integration/migration_to_software_module.md)。
 - mock RGB-D 输入输出格式见 [docs/mock_rgbd_io_schema.md](docs/mock_rgbd_io_schema.md)。
 - `root_translation_optimized_hands.npz` 字段说明见 [docs/root_translation_optimized_hands_npz_schema.md](docs/root_translation_optimized_hands_npz_schema.md)。
+- KR3 手部结果接口和架构预留见 [docs/kr3_hand_result_interface.md](docs/kr3_hand_result_interface.md)。
+- KR1/KR3 周报交付报告见 [docs/reports/kr1_delivery_report.md](docs/reports/kr1_delivery_report.md) 和 [docs/reports/kr3_delivery_report.md](docs/reports/kr3_delivery_report.md)。
 - 重建精度闭环方案见 [docs/reconstruction_accuracy_closed_loop.md](docs/reconstruction_accuracy_closed_loop.md)。
 - KR 提交交付规范见 [docs/kr_delivery_submission_guideline.md](docs/kr_delivery_submission_guideline.md)。
 - 多智能体协同和一次性闭环任务指令见 [docs/multi_agent_closed_loop_task.md](docs/multi_agent_closed_loop_task.md)。
 - gitee 初始化/同步步骤见 [docs/gitee_sync.md](docs/gitee_sync.md)。
 - `data/`、`outputs/` 和自动生成的 `mock_data/rgbd_scene_001/` 不提交到代码仓库。
 - `.gitignore` 已配置真实大数据、生成结果、虚拟环境和 Python 缓存。
+
+## 代码分层
+
+```text
+src/hand_recon/
+  api.py          # 稳定软件集成入口
+  core/           # 点云、RGB-D、ICP、几何基础能力
+  io/             # PLY/NPZ/JSON/scene 读写入口
+  pipelines/      # mock RGB-D、Re:InterHand 等可组合流程
+  adapters/       # 外部系统和统一 hand result 格式适配
+  reports/        # HTML 报告生成
+  interfaces/     # schema 相关接口定义
+```
+
+`demo/` 和 `scripts/` 保留为命令行入口，但核心逻辑应沉到 `src/hand_recon/`。
 
 ## 上传版本
 
@@ -90,6 +138,7 @@ python3 demo/run_mock_rgbd_pipeline.py --output-dir outputs/mock_rgbd_demo
 - `outputs/mock_rgbd_demo/quality_report.json`
 - `outputs/mock_rgbd_demo/summary.json`
 - `outputs/mock_rgbd_demo/scale/root_translation_optimized_hands.npz`
+- `outputs/mock_rgbd_demo/kr3/hand_result.npz`
 - `outputs/mock_rgbd_demo/scale/accuracy_report.json`（运行精度闭环脚本后生成）
 
 mock RGB-D 输入输出 schema 见 [docs/mock_rgbd_io_schema.md](docs/mock_rgbd_io_schema.md)。
@@ -106,6 +155,66 @@ python3 scripts/evaluate_normalized_npz_accuracy.py \
 
 ```bash
 python3 -m pytest tests/test_mock_rgbd_pipeline.py
+```
+
+## KR3：真值/DMA/super-labelator 接口预留
+
+当前已补一个面向周报展示的最小接口预留：
+
+- 统一手部结果 schema：`schemas/kr3/hand_result_schema.json`。
+- 统一 Python adapter 出口：`src/hand_recon/interfaces/hand_result.py`。
+- 主字段覆盖 22DOF、21 个 3D 关键点、mesh vertices/faces。
+- 预留 `ground_truth_system`、`dma_vision`、`super_labelator` 三类来源。
+- 预留 MANO 和 UmeTrack optional 字段。
+
+验收：
+
+```bash
+bash scripts/run_kr3_checks.sh
+```
+
+## 多智能体协同校验 HTML
+
+生成可用于周报展示的协同校验报告：
+
+```bash
+bash scripts/run_multi_agent_validation_report.sh
+```
+
+输出：
+
+```text
+outputs/reports/multi_agent_validation_report.html
+outputs/reports/multi_agent_validation_report.json
+```
+
+报告按代码与接口、Schema、测试与产物、文档与周报、验收视角五个智能体角色汇总证据和剩余风险。
+
+## 可视化 HTML 报告
+
+生成带点云、关键点、mesh 和关节角图的展示报告：
+
+```bash
+bash scripts/run_hand_visual_report.sh
+```
+
+输出：
+
+```text
+outputs/reports/hand_reconstruction_visual_report.html
+```
+
+使用本地最强 Re:InterHand pilot MANO mesh 数据生成真实 mesh/ICP 可视化报告：
+
+```bash
+bash scripts/run_best_data_visual_report.sh
+```
+
+输出：
+
+```text
+outputs/reports/best_data_reinterhand_visual_report.html
+outputs/reinterhand_best_right_sequence_icp/icp_summary.json
 ```
 
 ## 第一阶段：ICP

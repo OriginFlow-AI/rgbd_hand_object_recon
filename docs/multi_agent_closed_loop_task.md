@@ -81,3 +81,28 @@
 - “我正在/我准备/我已经看了”。
 - 没有文件路径或数值的完成描述。
 - 重复粘贴长日志。
+
+## 6. HTML 协同校验报告
+
+当前仓库提供一个可复现的多智能体协同校验 HTML 报告生成器：
+
+```bash
+bash scripts/run_multi_agent_validation_report.sh
+```
+
+输出：
+
+```text
+outputs/reports/multi_agent_validation_report.html
+outputs/reports/multi_agent_validation_report.json
+```
+
+报告内置五个规则化校验角色：
+
+- 代码与接口智能体。
+- Schema 智能体。
+- 测试与产物智能体。
+- 文档与周报智能体。
+- 验收视角智能体。
+
+该报告用于周报和验收展示，不替代真实系统接入后的人工复核和真实数据精度评测。
