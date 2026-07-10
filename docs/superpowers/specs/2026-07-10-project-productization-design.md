@@ -79,7 +79,7 @@ rgbd_hand_object_recon/
 
 ## 5. 分析数据契约
 
-标准观测记录使用以下字段：
+时间对齐记录使用以下字段：
 
 | 字段 | 类型 | 含义 |
 |---|---|---|
@@ -88,12 +88,22 @@ rgbd_hand_object_recon/
 | `camera_id` | string | 相机标识 |
 | `timestamp_ns` | integer/null | 指定时钟域下的纳秒时间戳 |
 | `clock_domain` | string/null | hardware、device、host_monotonic 等 |
+| `source` | string | mock、detector、mano_fit、human_label 等 |
+
+pose 记录独立建模，避免把一个融合 pose 复制到多台相机后虚增检出数：
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `sequence_id` | string | 序列标识 |
+| `frame_id` | string | 逻辑帧标识 |
+| `view_id` | string/null | 单视角标识；融合结果为 `fused` |
+| `expected` | boolean | 该位置是否应运行 pose |
 | `pose_status` | string | ok、missing、invalid、not_run |
 | `pose_confidence` | float/null | 0 到 1 的置信度 |
 | `valid_joint_count` | integer/null | 有效 3D 关节点数量 |
 | `source` | string | mock、detector、mano_fit、human_label 等 |
 
-JSONL 是通用输入格式。当前工程另提供 mock scene 和 Re:InterHand 本地目录适配器，适配结果仍进入同一指标模型。
+JSONL 是通用输入格式，每行通过 `record_type=frame|pose` 区分契约。当前工程另提供 mock scene 和 Re:InterHand 本地目录适配器，适配结果仍进入同一指标模型。
 
 ## 6. 指标定义
 
