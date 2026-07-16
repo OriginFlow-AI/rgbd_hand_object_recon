@@ -32,7 +32,7 @@ def test_module_cli_and_package_metadata() -> None:
     assert result.returncode == 0
     assert "demo" in result.stdout
     assert "verify" in result.stdout
-    assert __version__ == "0.1.0"
+    assert __version__ == "0.2.0"
 
 
 def test_committed_config_is_loaded_and_validated() -> None:
@@ -45,6 +45,8 @@ def test_committed_config_is_loaded_and_validated() -> None:
         mock_rgbd_config_from_mapping({"voxel_size_m": 0})
     with pytest.raises(ConfigurationError, match="must be a boolean"):
         mock_rgbd_config_from_mapping({"overwrite_mock_data": "false"})
+    with pytest.raises(ConfigurationError, match="unknown surface keys"):
+        mock_rgbd_config_from_mapping({"surface": {"voxel_szie_m": 0.003}})
 
 
 def test_cli_returns_actionable_config_error(tmp_path: Path) -> None:

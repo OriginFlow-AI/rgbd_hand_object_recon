@@ -11,7 +11,9 @@ from hand_recon.adapters.hand_result import (
     validate_hand_result,
     write_hand_result_npz,
 )
+from hand_recon.config import HandSurfaceConfig
 from hand_recon.io.npz import load_npz_arrays
+from hand_recon.pipelines.hand_surface import reconstruct_hand_surface
 from hand_recon.pipelines.mock_rgbd import MockRgbdPipelineResult, run_mock_rgbd_pipeline
 from hand_recon.pipelines.reinterhand import ReinterHandIcpResult, run_reinterhand_best_right_icp
 from hand_recon.reports.best_data_visual import generate_best_data_visual_report
@@ -25,6 +27,7 @@ def run_mock_reconstruction(
     voxel_size_m: float = 0.003,
     hand_side: str = "right",
     overwrite_mock_data: bool = False,
+    surface_config: HandSurfaceConfig | None = None,
 ) -> MockRgbdPipelineResult:
     """Run the mock RGB-D reconstruction workflow and return structured results."""
 
@@ -34,6 +37,7 @@ def run_mock_reconstruction(
         voxel_size_m=voxel_size_m,
         hand_side=hand_side,
         overwrite_mock_data=overwrite_mock_data,
+        surface_config=surface_config,
     )
 
 
@@ -44,6 +48,12 @@ def load_hand_result_npz(path: Path) -> dict[str, np.ndarray]:
     deserialization. Hand-result files emitted by this package use only numeric,
     boolean, and Unicode arrays.
     """
+
+    return load_npz_arrays(path)
+
+
+def load_surface_geometry_npz(path: Path) -> dict[str, np.ndarray]:
+    """Safely load the joint-independent surface geometry bundle."""
 
     return load_npz_arrays(path)
 
@@ -78,7 +88,10 @@ __all__ = [
     "ReinterHandIcpResult",
     "build_hand_result_from_normalized",
     "generate_mock_visual_report",
+    "HandSurfaceConfig",
     "load_hand_result_npz",
+    "load_surface_geometry_npz",
+    "reconstruct_hand_surface",
     "run_reinterhand_best_data_visualization",
     "run_reinterhand_best_right_icp",
     "run_mock_reconstruction",

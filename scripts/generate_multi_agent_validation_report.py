@@ -62,6 +62,7 @@ def main() -> int:
         "agents": [agent_to_dict(agent) for agent in agents],
         "artifacts": context["artifacts"],
         "npz_fields": context["npz_fields"],
+        "surface_npz_fields": context["surface_npz_fields"],
     }
 
     args.output_html.parent.mkdir(parents=True, exist_ok=True)
@@ -131,6 +132,12 @@ def collect_context(command_results: list[dict[str, Any]]) -> dict[str, Any]:
         ("KR3 check script", ROOT / "scripts" / "run_kr3_checks.sh"),
         ("KR3 mock output", ROOT / "outputs" / "mock_rgbd_demo" / "kr3" / "hand_result.npz"),
         ("KR1 quality report", ROOT / "outputs" / "mock_rgbd_demo" / "quality_report.json"),
+        ("Surface architecture", ROOT / "docs" / "architecture.md"),
+        ("Surface manifest", ROOT / "outputs" / "mock_rgbd_demo" / "manifest.json"),
+        ("Surface quality", ROOT / "outputs" / "mock_rgbd_demo" / "quality" / "surface_quality.json"),
+        ("Surface geometry", ROOT / "outputs" / "mock_rgbd_demo" / "geometry" / "hand_geometry.npz"),
+        ("Surface mesh", ROOT / "outputs" / "mock_rgbd_demo" / "geometry" / "hand_surface.ply"),
+        ("Surface report", ROOT / "outputs" / "mock_rgbd_demo" / "report" / "index.html"),
         (
             "KR1 normalized output",
             ROOT / "outputs" / "mock_rgbd_demo" / "scale" / "root_translation_optimized_hands.npz",
@@ -150,6 +157,9 @@ def collect_context(command_results: list[dict[str, Any]]) -> dict[str, Any]:
         "artifacts": artifacts,
         "schema": load_schema(),
         "npz_fields": inspect_kr3_npz(ROOT / "outputs" / "mock_rgbd_demo" / "kr3" / "hand_result.npz"),
+        "surface_npz_fields": inspect_kr3_npz(ROOT / "outputs" / "mock_rgbd_demo" / "geometry" / "hand_geometry.npz"),
+        "surface_manifest": load_json(ROOT / "outputs" / "mock_rgbd_demo" / "manifest.json"),
+        "surface_quality": load_json(ROOT / "outputs" / "mock_rgbd_demo" / "quality" / "surface_quality.json"),
         "doc_text": read_text(ROOT / "docs" / "kr3_hand_result_interface.md"),
         "readme_text": read_text(ROOT / "README.md"),
     }
@@ -160,6 +170,13 @@ def load_schema() -> dict[str, Any]:
     if not schema_path.exists():
         return {}
     return json.loads(schema_path.read_text(encoding="utf-8"))
+
+
+def load_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    value = json.loads(path.read_text(encoding="utf-8"))
+    return value if isinstance(value, dict) else {}
 
 
 def inspect_kr3_npz(path: Path) -> dict[str, dict[str, Any]]:
@@ -175,12 +192,60 @@ def inspect_kr3_npz(path: Path) -> dict[str, dict[str, Any]]:
 
 def build_agent_reports(context: dict[str, Any]) -> list[AgentReport]:
     return [
+        surface_agent_report(context),
         code_agent_report(context),
         schema_agent_report(context),
         test_agent_report(context),
         doc_agent_report(context),
         acceptance_agent_report(context),
     ]
+
+
+def surface_agent_report(context: dict[str, Any]) -> AgentReport:
+    manifest = context["surface_manifest"]
+    quality = context["surface_quality"]
+    fields = context["surface_npz_fields"]
+    required_shapes = {
+        "raw_points_m": [None, 3],
+        "raw_colors_rgb": [None, 3],
+        "fused_points_m": [None, 3],
+        "mesh_vertices_m": [None, 3],
+        "mesh_faces": [None, 3],
+        "mesh_vertex_normals": [None, 3],
+    }
+    checks = [
+        CheckItem(
+            "Joint-independent contract",
+            "pass" if manifest.get("uses_joint_localization") is False else "fail",
+            "outputs/mock_rgbd_demo/manifest.json",
+            f"surface_semantics={manifest.get('surface_semantics')}",
+        ),
+        CheckItem(
+            "Surface quality",
+            "pass" if quality.get("status") == "ok" else "fail",
+            "outputs/mock_rgbd_demo/quality/surface_quality.json",
+            f"warnings={quality.get('warnings', [])}",
+        ),
+    ]
+    for name, expected in required_shapes.items():
+        actual = fields.get(name, {}).get("shape")
+        valid = isinstance(actual, list) and len(actual) == 2 and actual[1] == expected[1] and actual[0] > 0
+        checks.append(
+            CheckItem(
+                name,
+                "pass" if valid else "fail",
+                "outputs/mock_rgbd_demo/geometry/hand_geometry.npz",
+                f"shape={actual}",
+            )
+        )
+    status = status_from_checks(checks)
+    return AgentReport(
+        role="表面重建智能体",
+        status=status,
+        summary="检查无关节点 TSDF 表面、稳定几何契约与质量门禁。",
+        checks=checks,
+        risks=[] if status == "pass" else ["主表面产物、shape 或观测质量未通过。"],
+    )
 
 
 def code_agent_report(context: dict[str, Any]) -> AgentReport:
@@ -324,9 +389,8 @@ def acceptance_agent_report(context: dict[str, Any]) -> AgentReport:
         for item in artifacts
     ]
     warnings = []
-    mesh_model = context["npz_fields"].get("mesh_model")
-    if mesh_model:
-        warnings.append("当前 mesh 为 mock adapter 产物，真实 MANO/UmeTrack SDK 接入后需要替换 mesh 顶点和拓扑。")
+    if context["surface_manifest"].get("uses_joint_localization") is not False:
+        warnings.append("主表面 manifest 缺失或仍依赖关节点定位。")
     if not context["command_results"]:
         warnings.append("本次报告使用 --skip-commands 生成，命令结果未刷新。")
     status = "warning" if warnings and status_from_checks(checks) == "pass" else status_from_checks(checks)
@@ -373,6 +437,10 @@ def render_html(payload: dict[str, Any]) -> str:
         f"<tr><td><code>{escape(key)}</code></td><td>{escape(str(value['shape']))}</td><td>{escape(value['dtype'])}</td></tr>"
         for key, value in sorted(payload["npz_fields"].items())
     )
+    surface_npz_rows = "\n".join(
+        f"<tr><td><code>{escape(key)}</code></td><td>{escape(str(value['shape']))}</td><td>{escape(value['dtype'])}</td></tr>"
+        for key, value in sorted(payload["surface_npz_fields"].items())
+    )
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -411,9 +479,9 @@ def render_html(payload: dict[str, Any]) -> str:
   <main>
     <section class="summary">
       <div class="card"><div class="muted">总体状态</div><div class="status">{badge(status)}</div></div>
-      <div class="card"><div class="muted">覆盖范围</div><strong>KR1 + KR3 + HTML 报告</strong></div>
-      <div class="card"><div class="muted">核心 KR3 字段</div><strong>22DOF / 21 joints / mesh</strong></div>
-      <div class="card"><div class="muted">主要产物</div><code>outputs/mock_rgbd_demo/kr3/hand_result.npz</code></div>
+      <div class="card"><div class="muted">覆盖范围</div><strong>RGB-D + TSDF + mesh + compatibility</strong></div>
+      <div class="card"><div class="muted">主链约束</div><strong>无关节点观测表面</strong></div>
+      <div class="card"><div class="muted">主要产物</div><code>geometry/hand_surface.ply</code></div>
     </section>
 
     <h2>智能体结论</h2>
@@ -427,6 +495,9 @@ def render_html(payload: dict[str, Any]) -> str:
 
     <h2>KR3 NPZ 字段快照</h2>
     <table><thead><tr><th>字段</th><th>shape</th><th>dtype</th></tr></thead><tbody>{npz_rows}</tbody></table>
+
+    <h2>Surface NPZ 字段快照</h2>
+    <table><thead><tr><th>字段</th><th>shape</th><th>dtype</th></tr></thead><tbody>{surface_npz_rows}</tbody></table>
   </main>
 </body>
 </html>

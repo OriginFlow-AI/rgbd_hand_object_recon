@@ -9,8 +9,8 @@
 ```text
 输入数据/配置
   -> pipeline
-  -> 结构化结果
-  -> adapter/schema
+  -> SurfaceRunResult
+  -> manifest + geometry NPZ/PLY
   -> report 或下游软件消费
 ```
 
@@ -19,11 +19,12 @@
 | 层 | 路径 | 职责 |
 |---|---|---|
 | public API | `src/hand_recon/api.py`、`src/hand_recon/__init__.py` | 软件集成入口。 |
-| core library | `src/hand_recon/core/` | 点云、RGB-D、ICP、几何基础能力导出。 |
-| pipelines | `src/hand_recon/pipelines/` | 可组合流程，例如 mock RGB-D、Re:InterHand ICP。 |
+| domain | `src/hand_recon/domain.py` | TriangleMesh、TSDF、surface result 稳定契约。 |
+| core library | `fusion/`、`surface/`、`reconstruction.py` | 点云、TSDF、网格和质量。 |
+| pipelines | `src/hand_recon/pipelines/` | 无关节点 surface 用例与兼容总编排。 |
 | adapters | `src/hand_recon/adapters/` | 外部系统/统一 hand result 的格式适配。 |
-| reports | `src/hand_recon/reports/` | HTML 报告生成。 |
-| io | `src/hand_recon/io/` | PLY/NPZ/JSON/scene 读写入口。 |
+| visualization | `src/hand_recon/visualization/` | 只消费 manifest 的离线 HTML。 |
+| io | `src/hand_recon/io/` | 原子 PLY/NPZ/JSON 和 artifact manifest。 |
 | scripts | `scripts/` | 薄 CLI 包装，供人工验收和批处理使用。 |
 | docs | `docs/` | 说明、schema 文档、迁移文档、周报报告。 |
 | tests | `tests/` | 自动化测试。 |
@@ -35,10 +36,8 @@
 from pathlib import Path
 
 from hand_recon import (
-    generate_mock_visual_report,
-    load_hand_result_npz,
+    load_surface_geometry_npz,
     run_mock_reconstruction,
-    validate_hand_result,
 )
 
 result = run_mock_reconstruction(
@@ -47,14 +46,11 @@ result = run_mock_reconstruction(
     hand_side="right",
 )
 
-hand_result = load_hand_result_npz(result.output_paths["kr3_hand_result"])
-errors = validate_hand_result(hand_result)
-assert not errors
-
-generate_mock_visual_report(
-    demo_dir=result.output_dir,
-    output_html=Path("outputs/reports/hand_reconstruction_visual_report.html"),
-)
+assert result.surface_result.ok
+geometry = load_surface_geometry_npz(result.output_paths["hand_geometry"])
+mesh_vertices = geometry["mesh_vertices_m"]
+mesh_faces = geometry["mesh_faces"]
+report_path = result.output_paths["surface_report"]
 ```
 
 ## Re:InterHand 最佳数据报告
@@ -72,7 +68,21 @@ run_reinterhand_best_data_visualization(
 )
 ```
 
-## 面向外部系统的 hand result
+## 主表面结果
+
+| 字段 | shape | 用途 |
+|---|---:|---|
+| `raw_points_m` | `(N, 3)` | 每视角观测点拼接。 |
+| `raw_colors_rgb` | `(N, 3)` | 与观测点严格对齐的 RGB。 |
+| `raw_view_indices` | `(N,)` | 观测来源视角。 |
+| `fused_points_m` | `(M, 3)` | 彩色体素融合点。 |
+| `mesh_vertices_m` | `(V, 3)` | TSDF 观测表面顶点。 |
+| `mesh_faces` | `(F, 3)` | 三角面索引。 |
+| `mesh_vertex_normals` | `(V, 3)` | TSDF 梯度定向法线。 |
+
+机器交接应先读 `manifest.json`，不要硬编码产物路径。
+
+## 兼容外部 hand result
 
 统一 hand result payload 的核心字段：
 
@@ -96,6 +106,7 @@ schemas/kr3/hand_result_schema.json
 - 不把 `outputs/` 当成源码或稳定 API。
 - 不在业务代码里硬编码 `mock_data/rgbd_scene_001`。
 - 不依赖 HTML 页面里的展示文字作为机器接口。
+- 不把 KR3 joints/angles/placeholder mesh 当作主表面重建结果。
 
 ## 验收命令
 

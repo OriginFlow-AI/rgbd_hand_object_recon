@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from hand_recon import generate_mock_visual_report, load_hand_result_npz, run_mock_reconstruction, validate_hand_result
+from hand_recon import load_surface_geometry_npz, run_mock_reconstruction
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -17,18 +17,13 @@ def main() -> int:
         output_dir=output_dir,
         hand_side="right",
     )
-    hand_result = load_hand_result_npz(result.output_paths["kr3_hand_result"])
-    errors = validate_hand_result(hand_result)
-    if errors:
-        raise SystemExit("invalid hand result: " + "; ".join(errors))
+    geometry = load_surface_geometry_npz(result.output_paths["hand_geometry"])
+    if geometry["mesh_faces"].shape[0] == 0:
+        raise SystemExit("surface reconstruction returned no mesh faces")
 
-    report_path = generate_mock_visual_report(
-        demo_dir=output_dir,
-        output_html=ROOT / "outputs" / "reports" / "api_demo_hand_visual.html",
-    )
     print(f"status={result.status}")
-    print(f"hand_result={result.output_paths['kr3_hand_result']}")
-    print(f"report={report_path}")
+    print(f"mesh={result.output_paths['hand_surface']}")
+    print(f"report={result.output_paths['surface_report']}")
     return 0
 
 

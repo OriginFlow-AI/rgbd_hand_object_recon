@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rgbd-hand-object-recon"
-version = "0.1.0"
-description = "Multi-view RGB-D hand/object reconstruction and result adapters"
+version = "0.2.0"
+description = "Joint-independent multi-view RGB-D hand-surface reconstruction and visualization"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

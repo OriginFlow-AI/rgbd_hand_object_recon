@@ -1,48 +1,66 @@
-# Project Structure
+# 工程目录与依赖规则
 
 ```text
 rgbd_hand_object_recon/
-  pyproject.toml              # package metadata, dependencies, pytest/Ruff config
-  Makefile                    # setup/demo/test/lint/check targets
-  run.sh                      # shortest visible-result entrypoint
-  configs/                    # committed runtime configuration
-  demo/                       # backward-compatible thin demo wrappers
-  examples/                   # public API integration examples
-  schemas/kr3/                # machine-readable hand-result contract
-  scripts/                    # dataset/report/verification CLI wrappers
+  pyproject.toml                  # 包版本、运行/开发依赖、质量工具
+  Makefile                        # setup/demo/test/check
+  run.sh                          # 最短完整结果入口
+  configs/                        # 可提交的运行配置
   src/hand_recon/
-    api.py                    # stable software integration API
-    cli.py, __main__.py       # installed/module CLI
-    config.py, exceptions.py  # validated configuration and domain errors
-    rgbd.py                   # RGB-D scene model, loading, backprojection
-    reconstruction.py         # multi-view world-frame fusion
-    icp.py                    # point-cloud I/O and rigid ICP primitives
-    pose.py, evaluation.py    # mock pose and quality gates
-    normalized_output.py      # normalized hand payload
-    io/                       # safe/atomic JSON and NPZ helpers
-    pipelines/                # workflow orchestration
-    interfaces/, adapters/    # KR3 contract and compatibility surface
-    reports/                  # self-contained HTML reports
-  tests/                      # unit, contract, security, CLI, regression tests
-  third_party/                # vendored Re:InterHand lists plus local safety wrapper
-  docs/                       # current design/usage docs and historical reports
-  mock_data/                  # generated mock input (ignored except .gitkeep)
-  data/                       # real datasets (ignored)
-  outputs/                    # generated artifacts (ignored)
-  dist/                       # upload packages (ignored)
+    api.py, cli.py                # 外部入口与命令行
+    config.py, exceptions.py      # 配置边界和领域异常
+    domain.py                     # 稳定表面数据契约
+    rgbd.py                       # 标定场景、输入校验、反投影
+    reconstruction.py             # 带 RGB/view id 的多视角点云融合
+    fusion/
+      tsdf.py                     # projective TSDF
+    surface/
+      mesh.py                     # marching tetrahedra、清理、法线
+      quality.py                  # 几何质量指标和门禁
+    pipelines/
+      hand_surface.py             # 新的表面用例
+      mock_rgbd.py                # mock/兼容产物总编排
+      reinterhand.py              # 数据集参考实验
+    io/
+      geometry.py                 # mesh PLY、surface NPZ
+      artifacts.py                # manifest、校验和、产物边界
+      json_io.py, npz.py          # 安全原子基础 I/O
+    visualization/
+      surface_report.py           # 无关节点离线三维报告
+    reports/                      # 兼容 CLI 与其他历史报告
+    interfaces/, adapters/        # 兼容 KR3 契约
+    normalized_output.py, pose.py # 兼容关节点/位姿旁路
+  tests/                          # 数值、契约、安全、CLI、集成测试
+  docs/                           # 当前架构、SOP 与历史报告
+  scripts/                        # 薄命令行包装和数据准备
+  third_party/                    # 上游脚本与本地安全包装
+  mock_data/, data/, outputs/     # 生成输入、真实数据、产物（不提交）
 ```
 
-## Dependency rules
+## 依赖方向
 
-- Downstream applications import top-level `hand_recon` or `hand_recon.api`.
-- Pipelines may depend on geometry, interfaces and I/O; geometry must not depend on pipelines.
-- Scripts delegate to package modules. New business logic does not belong in `scripts/`.
-- `third_party/` is not imported by the package. The maintained selective downloader is
-  `scripts/prepare_reinterhand_pilot.py`.
-- Generated data and local environments are never source dependencies.
+```text
+api / cli
+   ↓
+pipelines
+   ↓
+domain ← reconstruction ← rgbd
+   ↑          ↓
+ surface ← fusion
+   ↓
+io/artifacts → visualization
 
-## Commit policy
+compatibility adapters ──旁路──→ legacy outputs
+```
 
-Commit source, schema, configs, docs, tests and small placeholders. Do not commit real datasets,
-generated reports/point clouds, upload archives, virtual environments or caches. `create_upload_package.sh`
-uses the same boundary.
+约束：
+
+- `domain` 不依赖 pipeline、I/O 或报告。
+- `fusion` 和 `surface` 是确定性数值模块，不读写文件。
+- `visualization` 只读取 manifest 声明的稳定产物，不访问 pipeline 内部对象。
+- `interfaces/adapters` 只负责旧格式，不得反向驱动表面重建。
+- `scripts/` 不承载业务逻辑；应用只 import `hand_recon` 或 `hand_recon.api`。
+- 产物用 `manifest.json` 交接，不使用临时文件名或 HTML 文本作为机器接口。
+
+这个结构刻意没有引入 DAG 引擎、服务总线、数据库或运行时 LLM agent。当前问题是单机
+几何重建；增加与失败边界无关的层只会降低可验证性。

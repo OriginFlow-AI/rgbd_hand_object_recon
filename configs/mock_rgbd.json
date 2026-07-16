@@ -2,6 +2,13 @@
   "scene_dir": "mock_data/rgbd_scene_001",
   "output_dir": "outputs/mock_rgbd_demo",
   "voxel_size_m": 0.003,
+  "surface": {
+    "voxel_size_m": 0.003,
+    "truncation_m": 0.009,
+    "padding_m": 0.012,
+    "min_weight": 1.0,
+    "max_voxel_count": 2000000
+  },
   "hand_side": "right",
   "overwrite_mock_data": false,
   "depth_unit": "meter",

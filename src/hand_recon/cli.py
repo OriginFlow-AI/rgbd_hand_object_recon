@@ -67,6 +67,7 @@ def _run_demo(args: argparse.Namespace) -> int:
         voxel_size_m=config.voxel_size_m,
         hand_side=config.hand_side,
         overwrite_mock_data=config.overwrite_mock_data,
+        surface_config=config.surface,
     )
     print(json.dumps(result.summary, indent=2, ensure_ascii=False))
     return 0 if result.ok else 1

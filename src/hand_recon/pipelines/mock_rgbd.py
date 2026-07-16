@@ -13,12 +13,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from hand_recon.config import HandSurfaceConfig
+from hand_recon.domain import SurfaceRunResult
 from hand_recon.evaluation import evaluate_quality
 from hand_recon.icp import write_ascii_ply
 from hand_recon.interfaces.hand_result import build_kr3_hand_result_from_normalized, write_kr3_hand_result_npz
+from hand_recon.io.artifacts import refresh_manifest_checksums, write_surface_artifacts
 from hand_recon.io.json_io import write_json
 from hand_recon.mock_data import LABEL_HAND, LABEL_OBJECT, generate_mock_rgbd_scene
 from hand_recon.normalized_output import build_normalized_hand_npz_payload, write_normalized_hand_npz
+from hand_recon.pipelines.hand_surface import reconstruct_hand_surface
 from hand_recon.pose import generate_pose_output
 from hand_recon.reconstruction import ReconstructionResult, reconstruct_multiview_pointcloud
 from hand_recon.rgbd import load_mock_rgbd_scene
@@ -39,6 +43,7 @@ class MockRgbdPipelineResult:
     fused_result: ReconstructionResult
     hand_result: ReconstructionResult
     object_result: ReconstructionResult
+    surface_result: SurfaceRunResult
 
     @property
     def ok(self) -> bool:
@@ -52,6 +57,7 @@ def run_mock_rgbd_pipeline(
     voxel_size_m: float = 0.003,
     hand_side: str = "right",
     overwrite_mock_data: bool = False,
+    surface_config: HandSurfaceConfig | None = None,
 ) -> MockRgbdPipelineResult:
     """Run the full mock RGB-D hand/object reconstruction pipeline."""
 
@@ -60,8 +66,8 @@ def run_mock_rgbd_pipeline(
     if not math.isfinite(voxel_size_m) or voxel_size_m <= 0:
         raise ValueError(f"voxel_size_m must be greater than zero, got {voxel_size_m}")
 
-    scene_dir = Path(scene_dir)
-    output_dir = Path(output_dir)
+    scene_dir = Path(scene_dir).resolve()
+    output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     LOGGER.info("starting mock reconstruction: scene=%s output=%s", scene_dir, output_dir)
 
@@ -82,11 +88,25 @@ def run_mock_rgbd_pipeline(
     )
     hand_result = reconstruct_multiview_pointcloud(scene, labels=[LABEL_HAND], voxel_size_m=voxel_size_m)
     object_result = reconstruct_multiview_pointcloud(scene, labels=[LABEL_OBJECT], voxel_size_m=voxel_size_m)
+    surface_config = surface_config or HandSurfaceConfig(voxel_size_m=voxel_size_m, truncation_m=3 * voxel_size_m)
+    surface_result = reconstruct_hand_surface(
+        scene,
+        hand_result,
+        hand_label=LABEL_HAND,
+        config=surface_config,
+    )
 
     output_paths = build_mock_output_paths(output_dir)
-    write_ascii_ply(output_paths["fused_pointcloud"], fused_result.fused_points)
-    write_ascii_ply(output_paths["hand_pointcloud"], hand_result.fused_points)
-    write_ascii_ply(output_paths["object_pointcloud"], object_result.fused_points)
+    write_ascii_ply(output_paths["fused_pointcloud"], fused_result.fused_points, fused_result.fused_colors_rgb)
+    write_ascii_ply(output_paths["hand_pointcloud"], hand_result.fused_points, hand_result.fused_colors_rgb)
+    write_ascii_ply(output_paths["object_pointcloud"], object_result.fused_points, object_result.fused_colors_rgb)
+    surface_paths = write_surface_artifacts(
+        output_dir=output_dir,
+        scene=scene,
+        cloud=hand_result,
+        result=surface_result,
+    )
+    output_paths.update(surface_paths)
 
     pose_output = generate_pose_output(hand_result.fused_points, object_result.fused_points, metadata=metadata)
     quality_report = evaluate_quality(
@@ -116,15 +136,28 @@ def run_mock_rgbd_pipeline(
     write_kr3_hand_result_npz(output_paths["kr3_hand_result"], kr3_payload)
 
     summary = {
-        "status": "ok" if quality_report["passed"] else "failed",
+        "status": "ok" if quality_report["passed"] and surface_result.status == "ok" else "partial",
         "scene_dir": str(scene_dir),
         "output_dir": str(output_dir),
-        "parameters": {"voxel_size_m": voxel_size_m, "hand_side": hand_side},
+        "parameters": {
+            "voxel_size_m": voxel_size_m,
+            "hand_side": hand_side,
+            "surface": surface_result.parameters,
+        },
         "outputs": {key: str(value) for key, value in output_paths.items()},
         "per_view_stats": fused_result.per_view_stats,
         "quality_passed": bool(quality_report["passed"]),
+        "surface_status": surface_result.status,
+        "uses_joint_localization": False,
     }
     write_json(output_paths["summary"], summary)
+    from hand_recon.visualization.surface_report import generate_surface_visual_report
+
+    generate_surface_visual_report(
+        demo_dir=output_dir,
+        output_html=output_paths["surface_report"],
+    )
+    refresh_manifest_checksums(output_paths["surface_manifest"])
     LOGGER.info(
         "mock reconstruction finished: status=%s fused_points=%d",
         summary["status"],
@@ -142,6 +175,7 @@ def run_mock_rgbd_pipeline(
         fused_result=fused_result,
         hand_result=hand_result,
         object_result=object_result,
+        surface_result=surface_result,
     )
 
 

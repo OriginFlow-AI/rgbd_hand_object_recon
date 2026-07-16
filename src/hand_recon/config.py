@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +20,27 @@ EXPECTED_MASK_LABELS = {
 
 
 @dataclass(frozen=True)
+class HandSurfaceConfig:
+    """Numerical controls tied to sensor resolution and resource bounds."""
+
+    voxel_size_m: float = 0.003
+    truncation_m: float = 0.009
+    padding_m: float = 0.012
+    min_weight: float = 1.0
+    max_voxel_count: int = 2_000_000
+
+    def __post_init__(self) -> None:
+        for name in ("voxel_size_m", "truncation_m", "padding_m", "min_weight"):
+            value = float(getattr(self, name))
+            if not math.isfinite(value) or value <= 0:
+                raise ConfigurationError(f"surface.{name} must be a positive finite value")
+        if self.truncation_m < 2.0 * self.voxel_size_m:
+            raise ConfigurationError("surface.truncation_m must be at least twice surface.voxel_size_m")
+        if self.max_voxel_count <= 0:
+            raise ConfigurationError("surface.max_voxel_count must be greater than zero")
+
+
+@dataclass(frozen=True)
 class MockRgbdConfig:
     """Runtime options accepted by the mock reconstruction workflow."""
 
@@ -28,6 +49,7 @@ class MockRgbdConfig:
     voxel_size_m: float = 0.003
     hand_side: str = "right"
     overwrite_mock_data: bool = False
+    surface: HandSurfaceConfig = field(default_factory=HandSurfaceConfig)
 
     def __post_init__(self) -> None:
         if not self.scene_dir:
@@ -38,6 +60,8 @@ class MockRgbdConfig:
             raise ConfigurationError("voxel_size_m must be greater than zero")
         if self.hand_side not in {"left", "right"}:
             raise ConfigurationError("hand_side must be 'left' or 'right'")
+        if not isinstance(self.surface, HandSurfaceConfig):
+            raise ConfigurationError("surface must be a HandSurfaceConfig")
 
 
 def load_mock_rgbd_config(path: Path) -> MockRgbdConfig:
@@ -68,6 +92,7 @@ def mock_rgbd_config_from_mapping(raw: Mapping[str, Any], *, source: Path | str 
         "overwrite_mock_data",
         "depth_unit",
         "mask_labels",
+        "surface",
     }
     unknown = sorted(set(raw) - allowed)
     if unknown:
@@ -86,12 +111,33 @@ def mock_rgbd_config_from_mapping(raw: Mapping[str, Any], *, source: Path | str 
         raise ConfigurationError(f"overwrite_mock_data in {source} must be a boolean")
 
     try:
+        surface_raw = raw.get("surface", {})
+        if not isinstance(surface_raw, Mapping):
+            raise ConfigurationError(f"surface in {source} must be an object")
         return MockRgbdConfig(
             scene_dir=Path(raw.get("scene_dir", MockRgbdConfig.scene_dir)),
             output_dir=Path(raw.get("output_dir", MockRgbdConfig.output_dir)),
             voxel_size_m=float(raw.get("voxel_size_m", MockRgbdConfig.voxel_size_m)),
             hand_side=str(raw.get("hand_side", MockRgbdConfig.hand_side)),
             overwrite_mock_data=overwrite_mock_data,
+            surface=_surface_config_from_mapping(surface_raw, source=source),
         )
     except (TypeError, ValueError) as exc:
         raise ConfigurationError(f"invalid value in {source}: {exc}") from exc
+
+
+def _surface_config_from_mapping(raw: Mapping[str, Any], *, source: Path | str) -> HandSurfaceConfig:
+    allowed = {"voxel_size_m", "truncation_m", "padding_m", "min_weight", "max_voxel_count"}
+    unknown = sorted(set(raw) - allowed)
+    if unknown:
+        raise ConfigurationError(f"unknown surface keys in {source}: {', '.join(unknown)}")
+    try:
+        return HandSurfaceConfig(
+            voxel_size_m=float(raw.get("voxel_size_m", HandSurfaceConfig.voxel_size_m)),
+            truncation_m=float(raw.get("truncation_m", HandSurfaceConfig.truncation_m)),
+            padding_m=float(raw.get("padding_m", HandSurfaceConfig.padding_m)),
+            min_weight=float(raw.get("min_weight", HandSurfaceConfig.min_weight)),
+            max_voxel_count=int(raw.get("max_voxel_count", HandSurfaceConfig.max_voxel_count)),
+        )
+    except (TypeError, ValueError) as exc:
+        raise ConfigurationError(f"invalid surface value in {source}: {exc}") from exc

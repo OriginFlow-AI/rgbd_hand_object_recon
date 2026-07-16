@@ -1,15 +1,18 @@
 # 第一次运行
 
-## 1. 准备环境
+## 1. 创建环境
+
+```bash
+make setup
+```
+
+或者执行包含测试、demo 与 ICP 自测的兼容入口：
 
 ```bash
 bash scripts/bootstrap_kr1_demo.sh
 ```
 
-该命令创建 `.venv`、以 editable 模式安装 `hand_recon`，然后运行测试、mock demo 和
-ICP 自测。真实数据不在安装过程中下载。
-
-## 2. 查看结果
+## 2. 生成完整表面与可视化
 
 ```bash
 ./run.sh
@@ -18,29 +21,28 @@ ICP 自测。真实数据不在安装过程中下载。
 打开：
 
 ```text
-outputs/reports/hand_reconstruction_visual_report.html
+outputs/mock_rgbd_demo/report/index.html
 ```
 
-## 3. 日常开发
+报告可以拖动旋转、滚轮缩放、切换网格/点云，并检查每个视角的 RGB、深度和 mask。
+全量几何位于：
 
-```bash
-make help
-make demo
-make test
-make check
+```text
+outputs/mock_rgbd_demo/geometry/hand_surface.ply
+outputs/mock_rgbd_demo/geometry/hand_geometry.npz
+outputs/mock_rgbd_demo/manifest.json
 ```
 
-如果不想安装包，命令前加 `PYTHONPATH=src`：
+## 3. 验证
 
 ```bash
-PYTHONPATH=src python3 -m hand_recon --help
+make check PYTHON=.venv/bin/python
 ```
 
 ## 常见问题
 
-- `No module named hand_recon`：先运行 bootstrap，或设置 `PYTHONPATH=src`。
-- 配置报错：从 `configs/mock_rgbd.json` 开始，未知字段会被拒绝。
-- demo 退出码为 1：查看 `quality_report.json` 的 `warnings`。
-- Re:InterHand 缺文件：先运行 `scripts/prepare_reinterhand_pilot.py --help`，不要把真实
-  数据提交到 Git。
-- ICP `not_enough_pairs`：检查单位、初值、重叠范围、距离阈值和 `min_pairs`。
+- `No module named hand_recon`：先运行 `make setup`，或命令前设置 `PYTHONPATH=src`。
+- `TSDF grid ... exceeding max_voxel_count`：检查单位和异常离群点，不要盲目提高资源上限。
+- `no supported zero crossing`：检查 hand mask、有效 depth、外参和截断距离。
+- 页面只有采样数据：这是为了交互速度；PLY/NPZ 始终保存全量网格。
+- 表面有边界：本阶段只输出实测表面，不凭空补全遮挡区域。

@@ -1,75 +1,122 @@
-# 架构与核心执行流程
+# 从第一性原理设计手部表面重建
 
-## 设计目标
+## 1. 工程目的
 
-工程把“几何计算”“流程编排”“交换契约”“展示”分开。公共 API 只依赖 package
-代码；CLI、demo 和批处理脚本依赖公共 API 或 pipeline，不允许核心模块反向依赖脚本。
+输入是多个相机在同一时刻对同一只手的 RGB、米制 depth、hand mask、内参和
+`camera_to_world`；输出是能够解释这些观测的世界坐标手部表面及其可信度。
 
-```text
-CLI / demo / scripts
-        |
-        v
-public API ---- reports
-        |
-        v
-pipelines ---- adapters/interfaces
-   |  |
-   |  +------ normalized output
-   v
-RGB-D / reconstruction / ICP / pose / evaluation
-        |
-        v
-safe JSON/NPZ and PLY I/O
-```
+本阶段明确排除关节点定位、骨架拟合和参数手模型。它们是姿态/语义推断问题，不是从
+深度恢复表面的必要条件。
 
-## Mock RGB-D 主流程
+## 2. 五条不可破坏的原则
 
-1. `config.py` 读取 JSON，拒绝未知字段、非法单位和非法阈值。
-2. `mock_data.py` 在场景不存在时生成 4 个确定性视角。
-3. `rgbd.py` 校验 metadata、相机参数、相对文件路径和数组 shape。
-4. `backproject_depth_to_points` 使用 pinhole 模型把有效 depth 像素恢复到 camera frame。
-5. `reconstruction.py` 使用 `camera_to_world` 变换每个视角，并按 mask label 选择点。
-6. `icp.voxel_downsample` 对拼接点云做确定性体素均值融合。
-7. `pose.py` 生成 mock bbox-centroid pose；`evaluation.py` 运行质量门禁。
-8. `normalized_output.py` 生成 left-camera 坐标系的 21 joints 和 20DoF-like 几何角。
-9. `interfaces/hand_result.py` 适配为 KR3 22DOF/joints/mesh 契约并严格校验。
-10. `io/` 原子写 JSON/NPZ；报告层只消费已经落盘的稳定产物。
+1. **证据优先**：每个几何产物都必须能追溯到输入视角。
+2. **坐标与单位显式**：全链以 meter 和声明的 world frame 工作，不猜测 mm/m。
+3. **不可观测不伪装**：输出分为观测表面与未来可选的推断补全；当前只实现前者。
+4. **质量回到观测**：点数不是精度，必须测距离、支持视角、连通性和拓扑。
+5. **资源有上限**：TSDF ROI 来自手部观测 bbox，并由 `max_voxel_count` 防止异常输入耗尽内存。
 
-默认 pipeline 会对 fused、hand 和 object 分别重建，以保持清晰的每类产物和既有输出
-契约。未来若性能成为瓶颈，可以在保持统计口径的前提下复用单次反投影结果。
-
-## 坐标和单位
-
-- 输入深度：meter。
-- `camera_to_world`：4×4 齐次变换。
-- 融合点云和 pose：world frame，meter。
-- normalized hand：第一个视角（rectified left camera）frame，meter/radian。
-- KR3 mock adapter：继承 normalized hand 坐标系。
-
-工程不猜测单位。错误的 mm/m 输入会导致灾难性尺度错误，因此当前选择显式拒绝未知
-`depth_unit`，而不是静默换算。
-
-## I/O 与失败策略
-
-- metadata 中数组路径必须是场景目录内的相对路径。
-- NPY/NPZ 禁止 object/pickle；字符串使用 Unicode dtype。
-- JSON 和 NPZ 使用同目录临时文件后原子替换，减少中断造成的半文件。
-- 相机参数、矩阵、shape、有限值和 KR3 字段一致性在边界处校验。
-- library 抛出 `HandReconError`/`ValueError` 兼容异常；CLI 记录错误并返回非零退出码。
-- library 不配置全局日志，只有 CLI/脚本负责 logging policy。
-
-## ICP 流程
-
-点云先按输入 scale 转为 meter，再做体素降采样和确定性随机上限采样。每轮 ICP：
+## 3. 最小最优数据流
 
 ```text
-nearest neighbors
-  -> distance threshold
-  -> trimmed correspondences
-  -> SVD best-fit rigid transform
-  -> compose transform
-  -> tolerance / max-iteration termination
+RgbdScene
+  → validate_scene
+  → backproject masked depth + preserve RGB/view id
+  → calibrated world-frame point observations
+  → colored voxel fusion
+  → bounded projective TSDF
+  → marching tetrahedra zero surface
+  → deduplicate / remove degenerate / keep main component
+  → orient by TSDF gradient / vertex normals / nearest observed color
+  → surface quality gates
+  → ArtifactManifest
+  → offline interactive report
 ```
 
-SciPy `cKDTree` 是正常路径；只有 SciPy 无法导入时才使用 NumPy 分块 fallback。运行结果
-保留 transform、误差、fitness、pair count 和逐轮 history，便于审计。
+相机已经标定时不默认运行 ICP。盲目 ICP 可能把分割错误或非同步运动“优化”成错误
+几何。未来只有在重叠率充分、校正量受限并且残差显著改善时，才允许 pose-graph
+refinement。
+
+## 4. 核心契约
+
+`domain.py` 固定三个边界：
+
+- `TsdfVolume`：origin、voxel size、TSDF values、weights、view support。
+- `TriangleMesh`：米制 vertices、faces、normals、RGB 和 coordinate frame；构造时验证 shape、有限值和索引。
+- `SurfaceRunResult`：status、mesh、quality 和参数/provenance。
+
+稳定落盘契约是 `manifest.json`。它记录 schema、语义、参数、数量、相对路径、文件大小和
+SHA-256。报告、测试和多智能体模块只通过它交接。
+
+## 5. TSDF 与网格
+
+ROI 为融合手部点云 bbox 加固定 padding。每个 voxel 投影到所有相机：仅当投影落在
+hand mask、depth 有效且位于截断带后方范围内时积分：
+
+```text
+signed_distance = observed_depth - voxel_camera_z
+tsdf = clip(signed_distance / truncation, -1, 1)
+```
+
+零等值面由每个体素立方体的六个四面体提取。清理步骤删除重复/退化三角形，只保留最大
+面连通分量，以 TSDF 梯度统一面方向，再按面积累积顶点法线。颜色取最近融合观测点，
+不会由关节点生成。
+
+采用 marching tetrahedra 是为了在 NumPy/SciPy 现有依赖内得到确定性表面；代价是
+三角面数量较多。后续若真实数据规模要求更高，可增加 Open3D 后端，但必须实现同一
+`SurfaceRunResult` 契约和相同质量门禁。
+
+## 6. 质量状态
+
+`surface/quality.py` 输出：
+
+- source→surface 与 surface→source mean/P95；
+- 顶点、三角面、表面积、bbox；
+- 连通分量、最大分量占比；
+- boundary/non-manifold edge；
+- 有 TSDF 支持和多视角支持的顶点比例。
+
+状态：
+
+- `ok`：所有当前门禁通过；
+- `partial`：得到可用表面，但至少一项支持或拓扑指标需检查；
+- 异常：输入不足、资源越界或没有零交叉，不生成假成功结果。
+
+## 7. I/O 与失败边界
+
+- 场景路径必须在 scene 目录内，NPY/NPZ 禁止 pickle object。
+- JSON/NPZ/mesh PLY 使用同目录临时文件并原子替换。
+- manifest 中的相对路径再次做 output-root containment 校验。
+- 三角面索引越界、NaN、无有效 depth、空 hand mask、TSDF 无零交叉均显式失败。
+- HTML 无外网依赖，只嵌入固定上限显示采样；科研产物始终保存全量数据。
+
+## 8. 兼容迁移
+
+原有 `normalized_output`、KR3 22DoF/joints 和 mock pose 不删除，以免破坏既有消费者；
+但它们是 `compatibility` 旁路：
+
+- 新表面不从 joints 构造；
+- 新报告不读取 `kr3/hand_result.npz`；
+- 删除 KR3 和 normalized 文件后仍能生成表面报告；
+- manifest 明确声明兼容产物不是主链输入。
+
+## 9. 多智能体协作
+
+运行时重建是确定性数值程序，不需要 LLM agent。多智能体只用于研发，并按失败边界分工：
+
+| 角色 | 独占范围 | 验收 |
+|---|---|---|
+| 主智能体 | 公共契约、pipeline、集成、最终提交 | 全量测试、端到端、输出审计 |
+| 架构智能体 | 目的、数据流、迁移和依赖审计 | 架构缺口与边界清单 |
+| 表面智能体 | TSDF、mesh、质量指标审计 | 数值方案、异常和测试矩阵 |
+| 可视化智能体 | 产物、HTML、交互和报告审计 | 不依赖关节点的验收方案 |
+
+协作规则：主智能体先冻结 `domain + manifest`；并行角色不同时改公共入口；交付必须包含
+假设、文件、命令、数值和风险；合并顺序是契约 → 几何 → 质量/展示 → pipeline/API。
+
+## 10. 剩余风险
+
+- 缺少可提交的真实同步 RGB-D fixture，mock 数值不能代表真实传感器。
+- 曝光不同步、外参误差、mask 边缘和多径深度会直接进入网格。
+- 当前最近顶点距离是轻量观测一致性指标，未来应补精确 point-to-triangle 和逐视角深度回投影。
+- 完全遮挡区域依然未知；未来若做补全，必须输出独立 `completed_surface` 并标注推断来源。

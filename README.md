@@ -1,210 +1,146 @@
-# RGB-D Hand/Object Reconstruction
+# RGB-D 手部表面重建
 
-这是一个多视角 RGB-D 手部/物体重建工程。它把标定后的 RGB、深度和语义 mask
-融合到统一世界坐标系，输出点云、mock 位姿、质量指标、规范化手部结果以及 KR3
-统一接口文件。核心能力位于 `src/hand_recon/`；`demo/` 和 `scripts/` 只保留兼容的
-命令行包装。
+本工程的核心目的只有一个：把同一时刻、已经标定并带手部分割的多视角 RGB-D
+观测，恢复成可追溯、可量化、可查看的手部三维表面。
 
-当前可稳定复现的是 deterministic mock RGB-D 闭环和点到点 ICP。mock pose、21
-关节点和 mesh 是几何占位结果，不等同于真实 MANO/UmeTrack 模型精度；
-Re:InterHand pilot 提供真实 MANO mesh，但不是原生 RGB-D。
+当前默认主链不依赖关节点、骨架、MANO 或 UmeTrack。它直接融合深度证据，输出彩色
+点云、TSDF 三角网格、质量报告、版本化产物清单和离线交互式 HTML。旧 KR3
+关节点/角度文件继续生成只是为了兼容既有消费者，不参与表面重建和主报告。
 
-## 三分钟开始
-
-首次运行（创建 `.venv`、安装包与开发依赖、执行完整验收）：
-
-```bash
-bash scripts/bootstrap_kr1_demo.sh
-```
-
-生成 mock 重建和自包含 HTML 报告：
-
-```bash
-./run.sh
-```
-
-报告位置：
-
-```text
-outputs/reports/hand_reconstruction_visual_report.html
-```
-
-如果依赖已经安装，也可以不安装包、直接从源码运行：
-
-```bash
-PYTHONPATH=src python3 -m hand_recon demo --config configs/mock_rgbd.json
-PYTHONPATH=src python3 -m hand_recon verify
-python3 -m pytest -q
-```
-
-标准开发入口：
+## 快速运行
 
 ```bash
 make setup
-make demo
-make check
+./run.sh
 ```
 
-## 核心执行流程
+完成后打开：
 
 ```text
-cameras.json + rgb/depth/mask .npy
-  -> 校验场景、相机参数、数组 shape 和文件边界
-  -> depth 反投影到各 camera frame
-  -> camera_to_world 变换到 world frame
-  -> 多视角拼接和体素降采样
-  -> hand/object mask 分流
-  -> mock pose + 质量门禁
-  -> normalized hand NPZ
-  -> KR3 adapter + 安全 NPZ
-  -> HTML 报告或下游软件
+outputs/mock_rgbd_demo/report/index.html
 ```
 
-主要模块职责：
+只运行代码和数值验收：
 
-| 层 | 路径 | 职责 |
-|---|---|---|
-| public API | `src/hand_recon/api.py` | 软件集成的稳定入口 |
-| configuration | `src/hand_recon/config.py` | JSON 配置加载和严格校验 |
-| core geometry | `rgbd.py`、`reconstruction.py`、`icp.py` | 反投影、坐标变换、融合与 ICP |
-| pipelines | `src/hand_recon/pipelines/` | mock 和 Re:InterHand 流程编排 |
-| interfaces/adapters | `interfaces/`、`adapters/` | KR3 契约和兼容适配 |
-| I/O | `src/hand_recon/io/` | 原子 JSON/NPZ 写入和安全 NPZ 加载 |
-| reports | `src/hand_recon/reports/` | 自包含 HTML 报告 |
+```bash
+make check PYTHON=.venv/bin/python
+```
 
-详细依赖方向与设计理由见 [docs/architecture.md](docs/architecture.md)。
+## 第一性原理
 
-## 主要输出
-
-默认 demo 写入 `outputs/mock_rgbd_demo/`：
+手部表面重建不是“生成一个看起来像手的模型”，而是让输出几何能够解释输入观测：
 
 ```text
-fused_pointcloud.ply
-hand_pointcloud.ply
-object_pointcloud.ply
-pose_output.json
-quality_report.json
+标定 RGB / meter depth / hand mask
+  → 输入、单位、路径和相机矩阵校验
+  → 各视角反投影为 world-frame 彩色手部点云
+  → 体素融合形成观测点云
+  → 在手部 ROI 中投影式 TSDF 融合
+  → marching tetrahedra 提取零等值面
+  → 退化面、重复面和小碎片清理，TSDF 梯度定向法线
+  → 观测支持、距离、连通性、边界和非流形质量门禁
+  → PLY / NPZ / JSON / HTML
+```
+
+没有被相机看到的区域无法仅凭 RGB-D 确定。本工程把输出明确标记为
+`observed_not_completed`：它宁可保留真实边界和质量警告，也不使用关节点扇形面或
+隐式形状先验伪装成“完整扫描”。这里的“更完整”指更多视角支持、更连续的实测表面
+以及更小的观测残差。
+
+## 主要产物
+
+默认目录 `outputs/mock_rgbd_demo/`：
+
+```text
+manifest.json                         # 唯一产物交接契约、相对路径和 SHA-256
+geometry/
+  hand_geometry.npz                  # raw/fused 点色、view id、mesh、法线
+  hand_fused.ply                     # 全量彩色融合点云
+  hand_surface.ply                   # 顶点、法线、颜色和三角面
+views/
+  view_00_hand.ply ...               # 每视角 world-frame 彩色手部点云
+quality/
+  surface_quality.json               # 表面质量门禁
+report/
+  index.html                         # 无 CDN、可旋转/缩放/切层的自包含报告
+fused_pointcloud.ply                 # 兼容路径
+hand_pointcloud.ply                  # 兼容路径，现已保留 RGB
+object_pointcloud.ply                # 兼容路径，现已保留 RGB
 summary.json
-scale/root_translation_optimized_hands.npz
-kr3/hand_result.npz
+scale/root_translation_optimized_hands.npz  # 兼容旁路
+kr3/hand_result.npz                        # 兼容旁路
 ```
 
-质量门禁关注有效深度视角、融合点数、hand/object 点数、覆盖率、包围盒范围和
-mock pose 置信度。默认配置下业务输出仍保持 4 个视角和 3335 个融合点。
+`hand_geometry.npz` 只含数值、布尔和 Unicode 数组，loader 固定
+`allow_pickle=False`。`manifest.json` 中所有产物路径都限制在输出目录内，并记录大小与
+SHA-256。
 
-NPZ 字符串字段使用普通 Unicode 数组，公共 loader 固定 `allow_pickle=False`，不会
-反序列化 Python object。mock KR3 结果明确标记为 `source_system=synthetic_mock`，并
-写入场景时间戳；真实系统可使用 `ground_truth_system`、`dma_vision` 或
-`super_labelator`。
+## 架构边界
 
-## 软件集成
+| 层 | 位置 | 职责 |
+|---|---|---|
+| 稳定契约 | `domain.py` | `TriangleMesh`、`TsdfVolume`、`SurfaceRunResult` 和不变量 |
+| 观测几何 | `rgbd.py`、`reconstruction.py` | 场景校验、反投影、颜色/视角身份和体素融合 |
+| 表面融合 | `fusion/tsdf.py` | 有界、带 mask 的 projective TSDF |
+| 表面处理 | `surface/mesh.py`、`surface/quality.py` | 网格提取、清理、法线和质量门禁 |
+| 用例编排 | `pipelines/hand_surface.py` | 联结稳定几何步骤，不承载 I/O 细节 |
+| 产物 I/O | `io/geometry.py`、`io/artifacts.py` | 原子网格写出、NPZ 和 manifest |
+| 展示 | `visualization/surface_report.py` | 只消费落盘契约，不读取关节点结果 |
+| 兼容层 | `normalized_output.py`、`interfaces/`、`adapters/` | 保留旧 KR3 行为，不污染新主链 |
+
+详细设计、失败边界和多智能体协作协议见
+[架构与核心流程](docs/architecture.md) 和 [目录职责](docs/project_structure.md)。
+
+## 软件调用
 
 ```python
 from pathlib import Path
 
-from hand_recon import (
-    generate_mock_visual_report,
-    load_hand_result_npz,
-    run_mock_reconstruction,
-    validate_hand_result,
-)
+from hand_recon import load_surface_geometry_npz, run_mock_reconstruction
 
 result = run_mock_reconstruction(
     scene_dir=Path("mock_data/rgbd_scene_001"),
     output_dir=Path("outputs/mock_rgbd_demo"),
-    hand_side="right",
 )
-payload = load_hand_result_npz(result.output_paths["kr3_hand_result"])
-assert validate_hand_result(payload) == []
+assert result.surface_result.ok
 
-generate_mock_visual_report(
-    demo_dir=result.output_dir,
-    output_html=Path("outputs/reports/hand_reconstruction_visual_report.html"),
-)
+geometry = load_surface_geometry_npz(result.output_paths["hand_geometry"])
+vertices = geometry["mesh_vertices_m"]
+faces = geometry["mesh_faces"]
 ```
 
-不要让业务代码直接 import `scripts/*.py`，也不要把 `outputs/` 或 HTML 展示文本当作
-稳定机器接口。更完整的集成说明见
-[docs/integration/software_integration.md](docs/integration/software_integration.md)。
+公共入口定义在 `hand_recon.api`。脚本只做参数解析，不应被业务代码 import。
 
-## 配置、日志与错误
+## 质量判据
 
-`configs/mock_rgbd.json` 是可运行配置，而不只是示例。支持字段：
+当前无 GT 闭环至少检查：
 
-- `scene_dir`、`output_dir`
-- `voxel_size_m`
-- `hand_side`
-- `overwrite_mock_data`
-- `depth_unit`（当前仅支持 `meter`）
-- `mask_labels`（当前契约为 background=0、hand=1、object=2）
+- 源点到表面、表面到源点的 mean/P95 距离；
+- TSDF 观测体素数、表面顶点/三角面数；
+- 单一主连通面、边界边比例和非流形边数量；
+- 有观测支持的顶点比例、至少双视角支持的顶点比例；
+- 表面积、包围盒和每视角贡献。
 
-未知字段、非法单位、非正体素、路径越界、坏 JSON/NPY/NPZ 和不一致的 KR3 字段会
-返回可定位错误。CLI 日志级别可用全局参数控制：
+mock 默认结果约为 2.8 万顶点、5.46 万三角面、非流形边 0、源点到表面 P95
+约 3.5 mm。数值测试使用容差而不是对整份网格做脆弱快照。
 
-```bash
-PYTHONPATH=src python3 -m hand_recon --log-level DEBUG demo --config configs/mock_rgbd.json
-```
+## 能力边界
 
-## Re:InterHand 与 ICP
-
-选择性下载/校验 pilot：
-
-```bash
-python3 scripts/prepare_reinterhand_pilot.py \
-  --download-mano \
-  --download-mugsy-cam-params \
-  --extract-mano
-```
-
-解压前会检查上游 MD5（兼容上游清单，不代表密码学来源认证），并拒绝路径穿越、
-链接和特殊文件。完整的上游下载清单位于 `third_party/reinterhand_download/`，其本地
-安全包装不再使用 shell 拼接。
-
-对任意点云运行 ICP：
-
-```bash
-python3 scripts/run_icp_registration.py \
-  --inputs target_cloud.ply source_view_01.ply source_view_02.ply \
-  --output-dir outputs/icp_registration \
-  --voxel-size-m 0.002 \
-  --distance-threshold-m 0.035
-```
-
-支持 `.ply`、`.npy` 和 `.npz`，也可用 `--init-transforms-json` 提供 4×4 初值。
-
-## 验收与 CI
-
-```bash
-python3 -m pytest -q
-bash scripts/run_kr1_checks.sh
-bash scripts/run_kr3_checks.sh
-PYTHONPATH=src python3 -m hand_recon verify
-```
-
-`make check` 额外运行 Ruff 和源码编译。GitHub Actions 在 Python 3.10 与 3.12 上执行
-相同质量门禁。
-
-## 数据与能力边界
-
-- `data/`、`outputs/`、`dist/`、虚拟环境和缓存不会提交。
-- 相机输入必须提供 meter 深度和 `camera_to_world`；当前没有自动单位换算。
-- mock pose 是点云包围盒质心，mock joints/mesh 是确定性几何占位。
-- KR3 MANO/UmeTrack optional 字段目前为接口预留，不代表 SDK 已接入。
-- 点到点 ICP 依赖合理初值，低重叠、对称形状和强遮挡仍可能落入局部最优。
-- Open3D/TSDF 尚未成为运行依赖。
+- 当前提交验证的是确定性 mock RGB-D；尚缺一个可提交的小型真实同步 RGB-D fixture。
+- 外参被视为可信标定；尚未实现带门禁的多视角 pose-graph refinement。
+- TSDF 只恢复观测表面，不推断完全遮挡区域，也不做关节点定位。
+- 真实手在多相机曝光期间运动会产生重影，必须由采集同步规范控制。
+- mask 边缘和深度噪声是表面精度上限；真实设备阈值应按噪声模型重新标定。
+- Re:InterHand MANO mesh/跨帧 ICP 是参考实验，不是本 RGB-D 主链的验收证据。
 
 ## 文档索引
 
-- [首次运行](START_HERE.md)
-- [架构与核心流程](docs/architecture.md)
+- [第一次运行](START_HERE.md)
+- [架构与第一性原理](docs/architecture.md)
 - [目录职责](docs/project_structure.md)
-- [mock RGB-D I/O](docs/mock_rgbd_io_schema.md)
-- [normalized hand NPZ](docs/root_translation_optimized_hands_npz_schema.md)
-- [KR3 hand result](docs/kr3_hand_result_interface.md)
-- [KR3 machine-readable schema](schemas/kr3/hand_result_schema.json)
-- [软件集成](docs/integration/software_integration.md)
-- [重建精度闭环](docs/reconstruction_accuracy_closed_loop.md)
-- [手部重建 SOP](docs/hand_reconstruction_sop.md)
-
-历史 KR 报告保留在 `docs/reports/`，用于追溯当时状态；当前命令、字段和测试结果以
-本 README、schema 与自动化测试为准。
+- [RGB-D I/O 与产物](docs/mock_rgbd_io_schema.md)
+- [手部表面重建 SOP](docs/hand_reconstruction_sop.md)
+- [表面精度闭环](docs/reconstruction_accuracy_closed_loop.md)
+- [多智能体协作协议](docs/multi_agent_closed_loop_task.md)
+- [兼容 KR3 接口](docs/kr3_hand_result_interface.md)
+- [兼容 KR3 machine-readable schema](schemas/kr3/hand_result_schema.json)

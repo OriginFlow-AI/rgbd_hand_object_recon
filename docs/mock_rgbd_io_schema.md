@@ -80,6 +80,18 @@ The demo writes:
 
 ```text
 outputs/mock_rgbd_demo/
+  manifest.json
+  geometry/
+    hand_geometry.npz
+    hand_fused.ply
+    hand_surface.ply
+  views/
+    view_00_hand.ply
+    view_01_hand.ply
+  quality/
+    surface_quality.json
+  report/
+    index.html
   fused_pointcloud.ply
   hand_pointcloud.ply
   object_pointcloud.ply
@@ -91,6 +103,15 @@ outputs/mock_rgbd_demo/
   kr3/
     hand_result.npz
 ```
+
+`geometry/hand_surface.ply` is the primary joint-independent output. It stores
+metric vertices, normals, RGB colors, and triangle faces extracted from the
+masked multi-view TSDF. `geometry/hand_geometry.npz` stores the complete raw,
+fused, and mesh arrays without pickle-backed object dtypes. `manifest.json`
+declares every artifact using output-relative paths and SHA-256 hashes.
+
+The surface is explicitly an observed surface (`observed_not_completed`):
+unseen regions are not inferred from joints or a parametric hand model.
 
 `pose_output.json` uses world-frame mock poses:
 
@@ -129,7 +150,8 @@ outputs/mock_rgbd_demo/
 - mean pose confidence
 - pass/fail flag and warnings
 
-`scale/root_translation_optimized_hands.npz` follows
+The following outputs are compatibility side products and are not consumed by
+the primary surface pipeline or HTML report. `scale/root_translation_optimized_hands.npz` follows
 [root_translation_optimized_hands.npz 字段说明](root_translation_optimized_hands_npz_schema.md).
 For the KR1 mock demo, WiLoR/stereo optimizer row fields use `-1`
 placeholders, orientation residual is zero, and the 21 hand joints are
