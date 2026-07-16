@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import html
 import json
-import math
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -18,7 +17,9 @@ ROOT = Path(__file__).resolve().parents[3]
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output-html", type=Path, default=ROOT / "outputs" / "reports" / "hand_reconstruction_visual_report.html")
+    parser.add_argument(
+        "--output-html", type=Path, default=ROOT / "outputs" / "reports" / "hand_reconstruction_visual_report.html"
+    )
     parser.add_argument("--demo-dir", type=Path, default=ROOT / "outputs" / "mock_rgbd_demo")
     parser.add_argument("--max-points", type=int, default=2800)
     return parser.parse_args()
@@ -45,13 +46,15 @@ def generate_hand_visual_report(
 
     demo_dir = Path(demo_dir)
     output_html = Path(output_html)
+    if max_points <= 0:
+        raise ValueError("max_points must be greater than zero")
     quality = load_json(demo_dir / "quality_report.json")
     pose = load_json(demo_dir / "pose_output.json")
     hand = read_ascii_ply(demo_dir / "hand_pointcloud.ply")
     obj = read_ascii_ply(demo_dir / "object_pointcloud.ply")
     fused = read_ascii_ply(demo_dir / "fused_pointcloud.ply")
     hand_result_path = demo_dir / "kr3" / "hand_result.npz"
-    with np.load(hand_result_path, allow_pickle=True) as data:
+    with np.load(hand_result_path, allow_pickle=False) as data:
         joints = np.asarray(data["joints_3d_m"], dtype=np.float64)[0]
         mesh_vertices = np.asarray(data["mesh_vertices_m"], dtype=np.float64)[0]
         mesh_faces = np.asarray(data["mesh_faces"], dtype=np.int64)
@@ -104,9 +107,17 @@ def render_report(
     ]
     bbox = metrics.get("bbox_extent_m", [0.0, 0.0, 0.0])
     metric_rows = [
-        ("depth valid ratio mean", f"{float(metrics.get('depth_valid_ratio_mean', 0.0)):.6f}", "有效深度像素占比均值。"),
+        (
+            "depth valid ratio mean",
+            f"{float(metrics.get('depth_valid_ratio_mean', 0.0)):.6f}",
+            "有效深度像素占比均值。",
+        ),
         ("bbox extent", ", ".join(f"{float(v):.4f} m" for v in bbox), "融合点云三维包围盒尺寸。"),
-        ("pose confidence mean", f"{float(metrics.get('pose_confidence_mean', 0.0)):.3f}", "手部与物体 mock 位姿平均置信度。"),
+        (
+            "pose confidence mean",
+            f"{float(metrics.get('pose_confidence_mean', 0.0)):.3f}",
+            "手部与物体 mock 位姿平均置信度。",
+        ),
         ("hand centroid", vector_text(hand_pose.get("translation_m", [])), "手部点云中心估计。"),
         ("object centroid", vector_text(object_pose.get("translation_m", [])), "物体点云中心估计。"),
     ]
@@ -169,7 +180,7 @@ def render_report(
       <div class="muted">生成时间：{escape(generated_at)} · 数据集：mock RGB-D scene · 报告类型：可视化诊断</div>
       <p class="note">{escape(source_note)}</p>
       <div class="metric-grid">
-        {''.join(render_metric_card(*item) for item in metric_cards)}
+        {"".join(render_metric_card(*item) for item in metric_cards)}
       </div>
     </header>
     <main>
@@ -177,7 +188,7 @@ def render_report(
         <h2>指标摘要</h2>
         <table>
           <thead><tr><th>指标</th><th>当前值</th><th>说明</th></tr></thead>
-          <tbody>{''.join(f'<tr><td><code>{escape(k)}</code></td><td>{escape(v)}</td><td>{escape(d)}</td></tr>' for k, v, d in metric_rows)}</tbody>
+          <tbody>{"".join(f"<tr><td><code>{escape(k)}</code></td><td>{escape(v)}</td><td>{escape(d)}</td></tr>" for k, v, d in metric_rows)}</tbody>
         </table>
       </section>
 
@@ -268,7 +279,9 @@ def projection_triptych(series: list[tuple[str, np.ndarray, str]], title: str) -
     width = 900
     height = 440
     panel_w = width / 3
-    all_points = np.vstack([points[:, [axis[0], axis[1]]] for _, points, _ in series for _, axis in panels if points.size])
+    all_points = np.vstack(
+        [points[:, [axis[0], axis[1]]] for _, points, _ in series for _, axis in panels if points.size]
+    )
     bounds = point_bounds(all_points)
     pieces = [f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="{escape(title)}">']
     pieces.append('<rect x="0" y="0" width="900" height="440" fill="#ffffff"/>')
@@ -280,7 +293,9 @@ def projection_triptych(series: list[tuple[str, np.ndarray, str]], title: str) -
             if points.size == 0:
                 continue
             projected = points[:, [axes[0], axes[1]]]
-            dots = scatter_points(projected, bounds, x0 + 18, 34, panel_w - 36, height - 74, color, radius=1.15, opacity=0.78)
+            dots = scatter_points(
+                projected, bounds, x0 + 18, 34, panel_w - 36, height - 74, color, radius=1.15, opacity=0.78
+            )
             pieces.append(dots)
     pieces.append(f'<text x="14" y="{height - 14}" font-size="12" font-weight="700">{escape(title)}</text>')
     pieces.append("</svg>")
@@ -296,24 +311,47 @@ def joint_projection(hand: np.ndarray, joints: np.ndarray) -> str:
     bounds = point_bounds(np.vstack([projected_hand, projected_joints]))
     pieces = [f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="21 hand landmarks">']
     pieces.append('<rect x="0" y="0" width="760" height="400" fill="#ffffff"/>')
-    pieces.append(scatter_points(projected_hand, bounds, 28, 30, width - 56, height - 66, "#b9c0c8", radius=1.1, opacity=0.42))
+    pieces.append(
+        scatter_points(projected_hand, bounds, 28, 30, width - 56, height - 66, "#b9c0c8", radius=1.1, opacity=0.42)
+    )
     bone_edges = [
-        (0, 1), (1, 2), (2, 3), (3, 4),
-        (0, 5), (5, 6), (6, 7), (7, 8),
-        (0, 9), (9, 10), (10, 11), (11, 12),
-        (0, 13), (13, 14), (14, 15), (15, 16),
-        (0, 17), (17, 18), (18, 19), (19, 20),
-        (5, 9), (9, 13), (13, 17),
+        (0, 1),
+        (1, 2),
+        (2, 3),
+        (3, 4),
+        (0, 5),
+        (5, 6),
+        (6, 7),
+        (7, 8),
+        (0, 9),
+        (9, 10),
+        (10, 11),
+        (11, 12),
+        (0, 13),
+        (13, 14),
+        (14, 15),
+        (15, 16),
+        (0, 17),
+        (17, 18),
+        (18, 19),
+        (19, 20),
+        (5, 9),
+        (9, 13),
+        (13, 17),
     ]
     mapped = map_points(projected_joints, bounds, 28, 30, width - 56, height - 66)
     for a, b in bone_edges:
         ax, ay = mapped[a]
         bx, by = mapped[b]
-        pieces.append(f'<line x1="{ax:.2f}" y1="{ay:.2f}" x2="{bx:.2f}" y2="{by:.2f}" stroke="#4d9b53" stroke-width="2.2" opacity="0.86"/>')
+        pieces.append(
+            f'<line x1="{ax:.2f}" y1="{ay:.2f}" x2="{bx:.2f}" y2="{by:.2f}" stroke="#4d9b53" stroke-width="2.2" opacity="0.86"/>'
+        )
     for idx, (x, y) in enumerate(mapped):
         color = "#4d9b53" if idx else "#5967d8"
         pieces.append(f'<circle cx="{x:.2f}" cy="{y:.2f}" r="5.0" fill="{color}" stroke="white" stroke-width="1.5"/>')
-    pieces.append(f'<text x="14" y="{height - 12}" font-size="12" font-weight="700">Step 3  21 hand landmarks over point cloud</text>')
+    pieces.append(
+        f'<text x="14" y="{height - 12}" font-size="12" font-weight="700">Step 3  21 hand landmarks over point cloud</text>'
+    )
     pieces.append("</svg>")
     return "".join(pieces)
 
@@ -336,7 +374,9 @@ def mesh_projection(hand: np.ndarray, vertices: np.ndarray, faces: np.ndarray) -
         pieces.append(f'<polygon points="{pts}" fill="#cdeeff" stroke="#4a90e2" stroke-width="1.4" opacity=".62"/>')
     for x, y in mapped_vertices:
         pieces.append(f'<circle cx="{x:.2f}" cy="{y:.2f}" r="3.6" fill="#4a90e2" stroke="white" stroke-width="1.0"/>')
-    pieces.append(f'<text x="14" y="{height - 12}" font-size="12" font-weight="700">Step 4  mesh vertices and faces</text>')
+    pieces.append(
+        f'<text x="14" y="{height - 12}" font-size="12" font-weight="700">Step 4  mesh vertices and faces</text>'
+    )
     pieces.append("</svg>")
     return "".join(pieces)
 
@@ -353,16 +393,24 @@ def bar_chart(labels: list[str], values: list[float], title: str, value_format: 
     bar_w = bar_area_w / max(1, len(values)) * 0.62
     pieces = [f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="{escape(title)}">']
     pieces.append('<rect x="0" y="0" width="760" height="400" fill="#ffffff"/>')
-    pieces.append(f'<line x1="{left}" y1="{height-bottom}" x2="{width-right}" y2="{height-bottom}" stroke="#9aa7b3"/>')
-    pieces.append(f'<line x1="{left}" y1="{top}" x2="{left}" y2="{height-bottom}" stroke="#9aa7b3"/>')
-    for idx, (label, value) in enumerate(zip(labels, values)):
+    pieces.append(
+        f'<line x1="{left}" y1="{height - bottom}" x2="{width - right}" y2="{height - bottom}" stroke="#9aa7b3"/>'
+    )
+    pieces.append(f'<line x1="{left}" y1="{top}" x2="{left}" y2="{height - bottom}" stroke="#9aa7b3"/>')
+    for idx, (label, value) in enumerate(zip(labels, values, strict=False)):
         cx = left + (idx + 0.5) * bar_area_w / max(1, len(values))
         bar_h = (height - bottom - top) * value / max_value
         x = cx - bar_w / 2
         y = height - bottom - bar_h
-        pieces.append(f'<rect x="{x:.2f}" y="{y:.2f}" width="{bar_w:.2f}" height="{bar_h:.2f}" fill="#4a90e2" opacity=".86"/>')
-        pieces.append(f'<text x="{cx:.2f}" y="{y - 8:.2f}" font-size="12" text-anchor="middle">{escape(value_format.format(value))}</text>')
-        pieces.append(f'<text x="{cx:.2f}" y="{height - 38}" font-size="12" text-anchor="middle">{escape(label)}</text>')
+        pieces.append(
+            f'<rect x="{x:.2f}" y="{y:.2f}" width="{bar_w:.2f}" height="{bar_h:.2f}" fill="#4a90e2" opacity=".86"/>'
+        )
+        pieces.append(
+            f'<text x="{cx:.2f}" y="{y - 8:.2f}" font-size="12" text-anchor="middle">{escape(value_format.format(value))}</text>'
+        )
+        pieces.append(
+            f'<text x="{cx:.2f}" y="{height - 38}" font-size="12" text-anchor="middle">{escape(label)}</text>'
+        )
     pieces.append(f'<text x="14" y="20" font-size="13" font-weight="700">{escape(title)}</text>')
     pieces.append("</svg>")
     return "".join(pieces)
@@ -383,17 +431,21 @@ def angle_chart(names: list[str], angles_deg: np.ndarray) -> str:
     bar_w = bar_area_w / len(values) * 0.72
     pieces = [f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="22 hand joint angles">']
     pieces.append('<rect x="0" y="0" width="760" height="400" fill="#ffffff"/>')
-    pieces.append(f'<line x1="{left}" y1="{zero_y:.2f}" x2="{width-right}" y2="{zero_y:.2f}" stroke="#9aa7b3"/>')
-    pieces.append(f'<line x1="{left}" y1="{top}" x2="{left}" y2="{height-bottom}" stroke="#9aa7b3"/>')
+    pieces.append(f'<line x1="{left}" y1="{zero_y:.2f}" x2="{width - right}" y2="{zero_y:.2f}" stroke="#9aa7b3"/>')
+    pieces.append(f'<line x1="{left}" y1="{top}" x2="{left}" y2="{height - bottom}" stroke="#9aa7b3"/>')
     for idx, value in enumerate(values):
         cx = left + (idx + 0.5) * bar_area_w / len(values)
         h = abs(value) / limit * area_h / 2
         y = zero_y - h if value >= 0 else zero_y
         color = "#4d9b53" if value >= 0 else "#e85d4f"
-        pieces.append(f'<rect x="{cx - bar_w/2:.2f}" y="{y:.2f}" width="{bar_w:.2f}" height="{h:.2f}" fill="{color}" opacity=".86"/>')
+        pieces.append(
+            f'<rect x="{cx - bar_w / 2:.2f}" y="{y:.2f}" width="{bar_w:.2f}" height="{h:.2f}" fill="{color}" opacity=".86"/>'
+        )
         short = names[idx].replace("_", " ")
-        pieces.append(f'<text transform="translate({cx:.2f},{height - 96}) rotate(62)" font-size="10">{escape(short)}</text>')
-    pieces.append(f'<text x="14" y="20" font-size="13" font-weight="700">Step 6  22 joint angles in degree</text>')
+        pieces.append(
+            f'<text transform="translate({cx:.2f},{height - 96}) rotate(62)" font-size="10">{escape(short)}</text>'
+        )
+    pieces.append('<text x="14" y="20" font-size="13" font-weight="700">Step 6  22 joint angles in degree</text>')
     pieces.append(f'<text x="{width - right - 72}" y="{top + 14}" font-size="12" fill="#5b697a">±{limit:.1f}°</text>')
     pieces.append("</svg>")
     return "".join(pieces)
@@ -435,7 +487,9 @@ def point_bounds(points: np.ndarray) -> tuple[float, float, float, float]:
     return float(mins[0] - pad[0]), float(maxs[0] + pad[0]), float(mins[1] - pad[1]), float(maxs[1] + pad[1])
 
 
-def map_points(points: np.ndarray, bounds: tuple[float, float, float, float], x: float, y: float, w: float, h: float) -> np.ndarray:
+def map_points(
+    points: np.ndarray, bounds: tuple[float, float, float, float], x: float, y: float, w: float, h: float
+) -> np.ndarray:
     min_x, max_x, min_y, max_y = bounds
     scale_x = w / max(max_x - min_x, 1e-9)
     scale_y = h / max(max_y - min_y, 1e-9)

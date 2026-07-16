@@ -12,15 +12,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
+import logging
 import shutil
-import sys
 import tarfile
 import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-
 
 ROOT = Path(__file__).resolve().parents[1]
 S3_BASE = "https://fb-baas-f32eacb9-8abb-11eb-b2b8-4857dd089e15.s3.amazonaws.com/ReInterHand"
@@ -37,16 +35,25 @@ CAPTURES = [
     "m--20230317--1433--TRO760--pilot--ProjectGoliath--Hands--two-hands",
 ]
 
+LOGGER = logging.getLogger(__name__)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-root", type=Path, default=ROOT / "data" / "reinterhand")
     parser.add_argument("--capture", default="auto-smallest", choices=["auto-smallest", *CAPTURES])
-    parser.add_argument("--skip-metadata", action="store_true", help="Use existing metadata files instead of scanning all captures.")
+    parser.add_argument(
+        "--skip-metadata", action="store_true", help="Use existing metadata files instead of scanning all captures."
+    )
     parser.add_argument("--metadata-only", action="store_true")
     parser.add_argument("--download-mano", action="store_true")
     parser.add_argument("--download-mugsy-cam-params", action="store_true")
     parser.add_argument("--extract-mano", action="store_true")
+    parser.add_argument(
+        "--allow-unverified-extract",
+        action="store_true",
+        help="Allow extraction when CHECKSUM has no entry. A checksum mismatch is always rejected.",
+    )
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--summary-json", type=Path, default=ROOT / "outputs" / "reinterhand_pilot_summary.json")
     return parser.parse_args()
@@ -66,7 +73,8 @@ def request_with_retries(url: str, headers: dict[str, str] | None = None, timeou
             last_error = exc
             if attempt < 2:
                 time.sleep(1.5 * (attempt + 1))
-    assert last_error is not None
+    if last_error is None:  # Defensive: the retry loop always runs at least once.
+        raise RuntimeError(f"request failed without a reported error: {url}")
     raise last_error
 
 
@@ -76,7 +84,7 @@ def remote_size(url: str) -> int | None:
         with urlopen(req, timeout=30) as response:
             value = response.headers.get("Content-Length")
         return int(value) if value else None
-    except Exception:
+    except (HTTPError, URLError, TimeoutError, TypeError, ValueError):
         return None
 
 
@@ -96,6 +104,9 @@ def download_file(
         start = 0
     if expected_size is not None and output_path.exists() and output_path.stat().st_size == expected_size:
         return {"path": str(output_path), "bytes": expected_size, "status": "already_complete"}
+    if expected_size is not None and start > expected_size:
+        LOGGER.warning("discarding oversized partial download: %s", output_path)
+        start = 0
 
     headers = {}
     mode = "wb"
@@ -103,23 +114,33 @@ def download_file(
         headers["Range"] = f"bytes={start}-"
         mode = "ab"
 
-    with request_with_retries(url, headers=headers) as response, output_path.open(mode + "") as out:
-        copied = start
-        last_print = time.time()
-        while True:
-            chunk = response.read(1024 * 1024)
-            if not chunk:
-                break
-            out.write(chunk)
-            copied += len(chunk)
-            now = time.time()
-            if now - last_print > 5:
-                if expected_size:
-                    pct = copied / expected_size * 100.0
-                    print(f"  {output_path.name}: {copied / 1024**2:.1f}/{expected_size / 1024**2:.1f} MiB ({pct:.1f}%)")
-                else:
-                    print(f"  {output_path.name}: {copied / 1024**2:.1f} MiB")
-                last_print = now
+    with request_with_retries(url, headers=headers) as response:
+        response_status = getattr(response, "status", None)
+        if start > 0 and response_status != 206:
+            # Some object stores ignore Range and return the whole body. Appending
+            # that response would silently corrupt the archive.
+            LOGGER.warning("server ignored Range; restarting download: %s", output_path)
+            start = 0
+            mode = "wb"
+        with output_path.open(mode) as out:
+            copied = start
+            last_print = time.time()
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                out.write(chunk)
+                copied += len(chunk)
+                now = time.time()
+                if now - last_print > 5:
+                    if expected_size:
+                        pct = copied / expected_size * 100.0
+                        print(
+                            f"  {output_path.name}: {copied / 1024**2:.1f}/{expected_size / 1024**2:.1f} MiB ({pct:.1f}%)"
+                        )
+                    else:
+                        print(f"  {output_path.name}: {copied / 1024**2:.1f} MiB")
+                    last_print = now
 
     final_size = output_path.stat().st_size
     if expected_size is not None and final_size != expected_size:
@@ -128,7 +149,9 @@ def download_file(
 
 
 def md5sum(path: Path) -> str:
-    digest = hashlib.md5()
+    # Re:InterHand publishes MD5 checksums, so this is an upstream compatibility
+    # check rather than a cryptographic authenticity guarantee.
+    digest = hashlib.md5(usedforsecurity=False)
     with path.open("rb") as f:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             digest.update(chunk)
@@ -192,13 +215,40 @@ def choose_capture(data_root: Path, requested: str) -> str:
 
 
 def extract_tar_gz(path: Path, output_dir: Path) -> dict[str, object]:
+    """Extract an archive after rejecting links, devices, and path traversal."""
+
     output_dir.mkdir(parents=True, exist_ok=True)
     before = set(output_dir.rglob("*"))
     with tarfile.open(path, "r:gz") as tar:
-        tar.extractall(output_dir)
+        members = tar.getmembers()
+        _validate_tar_members(members, output_dir)
+        for member in members:
+            destination = output_dir / member.name
+            if member.isdir():
+                destination.mkdir(parents=True, exist_ok=True)
+                continue
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            source = tar.extractfile(member)
+            if source is None:
+                raise ValueError(f"archive member has no file body: {member.name!r}")
+            with source, destination.open("wb") as output:
+                shutil.copyfileobj(source, output, length=1024 * 1024)
     after = set(output_dir.rglob("*"))
     new_files = [p for p in after - before if p.is_file()]
     return {"path": str(path), "output_dir": str(output_dir), "new_file_count": len(new_files)}
+
+
+def _validate_tar_members(members: list[tarfile.TarInfo], output_dir: Path) -> None:
+    output_root = output_dir.resolve()
+    for member in members:
+        member_path = Path(member.name)
+        if member_path.is_absolute():
+            raise ValueError(f"archive contains an absolute path: {member.name!r}")
+        destination = (output_root / member_path).resolve()
+        if not destination.is_relative_to(output_root):
+            raise ValueError(f"archive member escapes the output directory: {member.name!r}")
+        if not (member.isfile() or member.isdir()):
+            raise ValueError(f"archive member type is not allowed: {member.name!r}")
 
 
 def summarize_capture(capture_dir: Path) -> dict[str, object]:
@@ -215,6 +265,9 @@ def summarize_capture(capture_dir: Path) -> dict[str, object]:
 
 def main() -> int:
     args = parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    if args.extract_mano and not args.download_mano:
+        raise SystemExit("--extract-mano requires --download-mano")
     args.data_root.mkdir(parents=True, exist_ok=True)
     metadata_reports = [] if args.skip_metadata else download_metadata(args.data_root, force=args.force)
     capture = choose_capture(args.data_root, args.capture)
@@ -222,16 +275,23 @@ def main() -> int:
     checksums = read_checksum(capture_dir)
     selected_reports: list[dict[str, object]] = []
 
-    if args.download_mano:
+    if args.download_mano and not args.metadata_only:
         relpath = "mano_fits/mano_fits.tar.gzaa"
         output_path = capture_dir / relpath
         result = download_file(url_for(capture, relpath), output_path, force=args.force)
-        result["verify"] = verify_file(output_path, checksums.get(relpath))
+        verification = verify_file(output_path, checksums.get(relpath))
+        result["verify"] = verification
         selected_reports.append(result)
         if args.extract_mano:
+            if verification["verified"] is False:
+                raise RuntimeError(f"refusing to extract {output_path}: checksum mismatch")
+            if verification["verified"] is None and not args.allow_unverified_extract:
+                raise RuntimeError(
+                    f"refusing to extract {output_path} without a checksum; pass --allow-unverified-extract to override"
+                )
             selected_reports.append(extract_tar_gz(output_path, capture_dir / "mano_fits"))
 
-    if args.download_mugsy_cam_params:
+    if args.download_mugsy_cam_params and not args.metadata_only:
         relpath = "Mugsy_cameras/cam_params.json"
         output_path = capture_dir / relpath
         result = download_file(url_for(capture, relpath), output_path, force=args.force)

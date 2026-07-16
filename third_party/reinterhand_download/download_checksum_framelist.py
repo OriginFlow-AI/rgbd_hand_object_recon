@@ -5,9 +5,12 @@
 # LICENSE file in the root directory of this source tree.
 # 
 
-import os
-import os.path as osp
+from pathlib import Path
 from tqdm import tqdm
+
+from download_utils import BASE_URL, download_file
+
+ROOT = Path(__file__).resolve().parent
 
 capture_id_list = [
         'm--20210701--1058--0000000--pilot--relightablehandsy--participant0--two-hands',
@@ -23,35 +26,19 @@ capture_id_list = [
 ]
 
 def download_checksum(capture_id):
-    # change the working directory
-    current_path = os.path.dirname(os.path.abspath(__file__))
-    os.chdir(osp.join(current_path, capture_id))
-
-    # download
-    cmd = 'wget https://fb-baas-f32eacb9-8abb-11eb-b2b8-4857dd089e15.s3.amazonaws.com/ReInterHand/' + capture_id + '/CHECKSUM'
-    os.system(cmd)
-
-    # back to the current path
-    os.chdir(current_path)
+    download_file(f"{BASE_URL}/{capture_id}/CHECKSUM", ROOT / capture_id)
 
 def download_frame_list(capture_id):
-    # change the working directory
-    current_path = os.path.dirname(os.path.abspath(__file__))
-    os.chdir(osp.join(current_path, capture_id))
+    output_dir = ROOT / capture_id
+    download_file(f"{BASE_URL}/{capture_id}/frame_list.txt", output_dir)
+    download_file(f"{BASE_URL}/{capture_id}/frame_list_orig.txt", output_dir)
 
-    # download
-    cmd = 'wget https://fb-baas-f32eacb9-8abb-11eb-b2b8-4857dd089e15.s3.amazonaws.com/ReInterHand/' + capture_id + '/frame_list.txt'
-    os.system(cmd)
-    cmd = 'wget https://fb-baas-f32eacb9-8abb-11eb-b2b8-4857dd089e15.s3.amazonaws.com/ReInterHand/' + capture_id + '/frame_list_orig.txt'
-    os.system(cmd)
-
-    # back to the current path
-    os.chdir(current_path)
-
-for capture_id in tqdm(capture_id_list):
-    os.makedirs(capture_id, exist_ok=True)
-    
-    download_checksum(capture_id)
-    download_frame_list(capture_id)
+def main():
+    for capture_id in tqdm(capture_id_list):
+        (ROOT / capture_id).mkdir(parents=True, exist_ok=True)
+        download_checksum(capture_id)
+        download_frame_list(capture_id)
 
 
+if __name__ == '__main__':
+    main()

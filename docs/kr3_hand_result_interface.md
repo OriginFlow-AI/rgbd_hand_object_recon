@@ -51,6 +51,7 @@ KR3 HandResult
 | `ground_truth_system` | 同步相机/depth/标定/时间戳、高可信手部标签或模型拟合 | 输出高置信 22DOF、21 joints、mesh、坐标系和标定来源。 |
 | `dma_vision` | 纯 RGB 或多视角 RGB、相机参数、DMA 手部预测 | 输出视觉模型预测结果，并标记置信度和是否需要复核。 |
 | `super_labelator` | 视觉预测、depth/几何观测、人工修正或多模态融合结果 | 输出融合后的最终标签或候选标签，保留 provenance。 |
+| `synthetic_mock` | 工程内确定性 mock RGB-D 数据 | 仅用于闭环、接口与回归测试，不能冒充真实系统结果。 |
 
 ## 统一输出路径
 
@@ -80,7 +81,7 @@ rotation unit = rad
 | 字段 | shape | 含义 |
 |---|---:|---|
 | `schema_version` | scalar | 当前为 `kr3_hand_result_v0.1`。 |
-| `source_system` | `(N,)` | `ground_truth_system` / `dma_vision` / `super_labelator`。 |
+| `source_system` | `(N,)` | `ground_truth_system` / `dma_vision` / `super_labelator` / `synthetic_mock`。 |
 | `frame_index` | `(N,)` | 原始帧号。 |
 | `timestamp_ns` | `(N,)` | 同步时间戳，单位 ns；未知时为 0。 |
 | `track_id` | `(N,)` | 手实例 track id。 |

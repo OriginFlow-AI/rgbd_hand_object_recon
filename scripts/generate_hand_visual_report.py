@@ -11,6 +11,5 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from hand_recon.reports.hand_visual import main  # noqa: E402
 
-
 if __name__ == "__main__":
     raise SystemExit(main())

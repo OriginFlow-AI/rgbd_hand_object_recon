@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://originflow.ai/schemas/kr3/hand_result_schema.json",
   "title": "KR3 Unified Hand Result NPZ Payload",
-  "description": "Shape-oriented schema for the KR3 reserved hand-result interface shared by the ground-truth system, DMA pure vision, and multi-modal super-labelator adapters.",
+  "description": "Shape-oriented schema for KR3 real-system adapters plus an explicitly separated synthetic mock source.",
   "type": "object",
   "required": [
     "schema_version",
@@ -42,7 +42,8 @@
         "enum": [
           "ground_truth_system",
           "dma_vision",
-          "super_labelator"
+          "super_labelator",
+          "synthetic_mock"
         ]
       },
       "x-npz-dtype": "unicode",
@@ -185,7 +186,7 @@
     "provenance_json": {
       "type": "array",
       "items": {"type": "string"},
-      "x-npz-dtype": "object",
+      "x-npz-dtype": "unicode",
       "x-npz-shape": ["N"]
     },
     "mano_pose_axis_angle": {

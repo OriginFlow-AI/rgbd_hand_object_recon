@@ -5,11 +5,11 @@
 # LICENSE file in the root directory of this source tree.
 # 
 
-import os
-import os.path as osp
+import hashlib
+from pathlib import Path
 from tqdm import tqdm
 
-current_path = os.path.dirname(os.path.abspath(__file__))
+current_path = Path(__file__).resolve().parent
 capture_id_list = [
         'm--20210701--1058--0000000--pilot--relightablehandsy--participant0--two-hands',
         'm--20220628--1327--BKS383--pilot--ProjectGoliath--ContinuousHandsy--two-hands',
@@ -23,15 +23,15 @@ capture_id_list = [
         'm--20230317--1433--TRO760--pilot--ProjectGoliath--Hands--two-hands'
 ]
 
-for capture_id in capture_id_list:
+def verify_capture(capture_id):
     print('Checking ' + capture_id)
-    
-    os.chdir(osp.join(current_path, capture_id))
+    capture_dir = current_path / capture_id
     checksum_filename = 'CHECKSUM'
-    if not osp.isfile(checksum_filename):
-        print(osp.join(current_path, capture_id, checksum_filename) + ' is missing. Please download it again.')
-        exit()
-    with open(checksum_filename) as f:
+    checksum_path = capture_dir / checksum_filename
+    if not checksum_path.is_file():
+        print(str(checksum_path) + ' is missing. Please download it again.')
+        raise SystemExit(1)
+    with checksum_path.open() as f:
         checksums = f.readlines()
 
     good = True
@@ -39,15 +39,22 @@ for capture_id in capture_id_list:
     for line in tqdm(checksums):
         filename, md5sum = line.split()
 
-        if not osp.isfile(filename):
+        relative_path = Path(filename)
+        path = (capture_dir / relative_path).resolve()
+        if relative_path.is_absolute() or not path.is_relative_to(capture_dir.resolve()):
+            good = False
+            results.append(filename + ': unsafe path in CHECKSUM; skipped.')
+            continue
+        if not path.is_file():
             good = False
             results.append(filename + ': missing. Please download it again.')
             continue
-        
-        os.system('md5sum ' + filename + ' > YOUR_CHECKSUM')
-        with open('YOUR_CHECKSUM') as f:
-            md5sum_yours, _ = f.readline().split()
-        os.system('rm YOUR_CHECKSUM')
+
+        digest = hashlib.md5(usedforsecurity=False)
+        with path.open('rb') as downloaded_file:
+            for chunk in iter(lambda: downloaded_file.read(1024 * 1024), b''):
+                digest.update(chunk)
+        md5sum_yours = digest.hexdigest()
         
         if md5sum == md5sum_yours:
             results.append(filename + ': md5sum is correct.')
@@ -61,9 +68,17 @@ for capture_id in capture_id_list:
         print('Some of downloaded files are not verified.')
 
     result_path = 'download_verify_results.txt'
-    with open(result_path, 'w') as f:
+    with (capture_dir / result_path).open('w') as f:
         for result in results:
             f.write(result + '\n')
-    print('The verification results are saved in ' + osp.join(current_path, capture_id, result_path))
-    os.chdir(current_path)
+    print('The verification results are saved in ' + str(capture_dir / result_path))
+    return good
 
+
+def main():
+    statuses = [verify_capture(capture_id) for capture_id in capture_id_list]
+    return 0 if all(statuses) else 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

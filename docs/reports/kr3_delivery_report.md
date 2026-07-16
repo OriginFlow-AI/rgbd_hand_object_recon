@@ -1,4 +1,7 @@
-# KR3 交付报告：真值/DMA/super-labelator 接口架构预留
+# KR3 交付报告：真值/DMA/super-labelator 接口架构预留（历史快照）
+
+> 本文记录接口初次预留时的三来源、object dtype 和测试数量。当前接口已额外区分
+> `synthetic_mock`，并全部使用非 pickle Unicode dtype；以 schema 和自动化测试为准。
 
 报告日期：2026-07-09
 

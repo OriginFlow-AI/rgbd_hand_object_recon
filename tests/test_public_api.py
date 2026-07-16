@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
 
 from hand_recon import generate_mock_visual_report, load_hand_result_npz, run_mock_reconstruction, validate_hand_result
 

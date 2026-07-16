@@ -47,12 +47,22 @@ class IcpResult:
 
 
 def validate_points(points: np.ndarray) -> np.ndarray:
-    points = np.asarray(points, dtype=np.float64)
-    if points.ndim != 2 or points.shape[1] < 3:
-        raise ValueError(f"point array must have shape (N, >=3), got {points.shape}")
-    points = points[:, :3]
-    keep = np.all(np.isfinite(points), axis=1)
-    return points[keep]
+    """Return finite XYZ rows from an ``(N, >=3)`` numeric array."""
+
+    valid_points, _ = _coerce_points_with_mask(points)
+    return valid_points
+
+
+def _coerce_points_with_mask(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    try:
+        point_array = np.asarray(points, dtype=np.float64)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("point array must contain numeric values") from exc
+    if point_array.ndim != 2 or point_array.shape[1] < 3:
+        raise ValueError(f"point array must have shape (N, >=3), got {point_array.shape}")
+    point_array = point_array[:, :3]
+    keep = np.all(np.isfinite(point_array), axis=1)
+    return point_array[keep], keep
 
 
 def load_point_cloud(path: Path, npz_points_key: str | None = None) -> PointCloud:
@@ -69,45 +79,53 @@ def load_point_cloud(path: Path, npz_points_key: str | None = None) -> PointClou
 
 
 def load_npz_cloud(path: Path, npz_points_key: str | None = None) -> PointCloud:
-    data = np.load(path)
-    point_keys = (
-        [npz_points_key]
-        if npz_points_key
-        else ["points", "voxel_points", "raw_points", "tsdf_points", "observed_points"]
-    )
-    points = None
-    chosen_key = None
-    for key in point_keys:
-        if key and key in data:
-            points = validate_points(data[key])
-            chosen_key = key
-            break
-    if points is None:
-        for key in data.files:
-            value = np.asarray(data[key])
-            if value.ndim == 2 and value.shape[1] >= 3 and np.issubdtype(value.dtype, np.number):
-                points = validate_points(value)
+    with np.load(path, allow_pickle=False) as data:
+        if npz_points_key is not None and npz_points_key not in data:
+            raise ValueError(f"point array key {npz_points_key!r} was not found in {path}")
+        point_keys = (
+            [npz_points_key]
+            if npz_points_key
+            else ["points", "voxel_points", "raw_points", "tsdf_points", "observed_points"]
+        )
+        points = None
+        point_keep = None
+        original_point_count = 0
+        chosen_key = None
+        for key in point_keys:
+            if key and key in data:
+                raw_points = np.asarray(data[key])
+                points, point_keep = _coerce_points_with_mask(raw_points)
+                original_point_count = raw_points.shape[0]
                 chosen_key = key
                 break
-    if points is None:
-        raise ValueError(f"no Nx3 point array found in {path}")
+        if points is None:
+            for key in data.files:
+                value = np.asarray(data[key])
+                if value.ndim == 2 and value.shape[1] >= 3 and np.issubdtype(value.dtype, np.number):
+                    points, point_keep = _coerce_points_with_mask(value)
+                    original_point_count = value.shape[0]
+                    chosen_key = key
+                    break
+        if points is None or point_keep is None:
+            requested = f" key {npz_points_key!r}" if npz_points_key else ""
+            raise ValueError(f"no Nx3 point array found in {path}{requested}")
 
-    colors = None
-    color_candidates = []
-    if chosen_key:
-        color_candidates.extend(
-            [
-                chosen_key.replace("points", "colors"),
-                f"{chosen_key}_colors",
-            ]
-        )
-    color_candidates.extend(["colors", "voxel_colors", "raw_colors", "tsdf_colors", "observed_colors"])
-    for key in color_candidates:
-        if key in data:
-            candidate = np.asarray(data[key])
-            if candidate.ndim == 2 and candidate.shape[0] >= points.shape[0] and candidate.shape[1] >= 3:
-                colors = np.clip(candidate[: points.shape[0], :3], 0, 255).astype(np.uint8)
-                break
+        colors = None
+        color_candidates = []
+        if chosen_key:
+            color_candidates.extend(
+                [
+                    chosen_key.replace("points", "colors"),
+                    f"{chosen_key}_colors",
+                ]
+            )
+        color_candidates.extend(["colors", "voxel_colors", "raw_colors", "tsdf_colors", "observed_colors"])
+        for key in dict.fromkeys(color_candidates):
+            if key in data:
+                candidate = np.asarray(data[key])
+                if candidate.ndim == 2 and candidate.shape[0] >= original_point_count and candidate.shape[1] >= 3:
+                    colors = np.clip(candidate[:original_point_count, :3][point_keep], 0, 255).astype(np.uint8)
+                    break
     return PointCloud(points=points, colors=colors, name=path.stem)
 
 
@@ -160,7 +178,7 @@ def load_ascii_ply(path: Path) -> PointCloud:
                 rows.append(line.split())
         if len(rows) != vertex_count:
             raise ValueError(f"PLY vertex count mismatch in {path}: expected {vertex_count}, got {len(rows)}")
-        arr = np.asarray(rows, dtype=np.float64)
+        arr = np.asarray(rows, dtype=np.float64) if rows else np.empty((0, len(vertex_properties)), dtype=np.float64)
     elif file_format == "binary_little_endian":
         dtype = np.dtype([(name, _ply_numpy_dtype(prop_type)) for prop_type, name in vertex_properties])
         with path.open("rb") as f:
@@ -176,13 +194,14 @@ def load_ascii_ply(path: Path) -> PointCloud:
     except KeyError as exc:
         raise ValueError(f"PLY file lacks x/y/z properties: {path}") from exc
 
+    points, point_keep = _coerce_points_with_mask(points)
     colors = None
     if {"red", "green", "blue"}.issubset(prop_to_idx):
         colors = np.column_stack(
             [arr[:, prop_to_idx["red"]], arr[:, prop_to_idx["green"]], arr[:, prop_to_idx["blue"]]]
         )
-        colors = np.clip(colors, 0, 255).astype(np.uint8)
-    return PointCloud(points=validate_points(points), colors=colors, name=Path(path).stem)
+        colors = np.clip(colors, 0, 255).astype(np.uint8)[point_keep]
+    return PointCloud(points=points, colors=colors, name=Path(path).stem)
 
 
 def _ply_numpy_dtype(prop_type: str) -> str:
@@ -213,10 +232,15 @@ def _ply_numpy_dtype(prop_type: str) -> str:
 def write_ascii_ply(path: Path, points: np.ndarray, colors: np.ndarray | None = None) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    points = validate_points(points)
+    original_count = np.asarray(points).shape[0] if np.asarray(points).ndim >= 1 else 0
+    points, point_keep = _coerce_points_with_mask(points)
     if colors is not None:
         colors = np.asarray(colors)
-        if colors.shape[0] != points.shape[0]:
+        if colors.ndim != 2 or colors.shape[1] < 3:
+            raise ValueError(f"colors must have shape (N, >=3), got {colors.shape}")
+        if colors.shape[0] == original_count:
+            colors = colors[point_keep]
+        elif colors.shape[0] != points.shape[0]:
             raise ValueError("colors must have the same row count as points")
         colors = np.clip(colors[:, :3], 0, 255).astype(np.uint8)
     with path.open("w", encoding="ascii") as f:
@@ -235,10 +259,9 @@ def write_ascii_ply(path: Path, points: np.ndarray, colors: np.ndarray | None = 
             for point in points:
                 f.write(f"{point[0]:.8f} {point[1]:.8f} {point[2]:.8f}\n")
         else:
-            for point, color in zip(points, colors):
+            for point, color in zip(points, colors, strict=True):
                 f.write(
-                    f"{point[0]:.8f} {point[1]:.8f} {point[2]:.8f} "
-                    f"{int(color[0])} {int(color[1])} {int(color[2])}\n"
+                    f"{point[0]:.8f} {point[1]:.8f} {point[2]:.8f} {int(color[0])} {int(color[1])} {int(color[2])}\n"
                 )
 
 
@@ -253,7 +276,11 @@ def make_transform(rotation: np.ndarray | None = None, translation: np.ndarray |
 
 def apply_transform(points: np.ndarray, transform: np.ndarray) -> np.ndarray:
     points = validate_points(points)
-    transform = np.asarray(transform, dtype=np.float64).reshape(4, 4)
+    transform = np.asarray(transform, dtype=np.float64)
+    if transform.shape != (4, 4):
+        raise ValueError(f"transform must have shape (4, 4), got {transform.shape}")
+    if not np.all(np.isfinite(transform)):
+        raise ValueError("transform must contain only finite values")
     return points @ transform[:3, :3].T + transform[:3, 3]
 
 
@@ -283,7 +310,16 @@ def voxel_downsample(
     colors: np.ndarray | None = None,
     voxel_size: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray | None]:
-    points = validate_points(points)
+    original_count = np.asarray(points).shape[0] if np.asarray(points).ndim >= 1 else 0
+    points, point_keep = _coerce_points_with_mask(points)
+    if colors is not None:
+        colors = np.asarray(colors)
+        if colors.ndim != 2 or colors.shape[1] < 3:
+            raise ValueError(f"colors must have shape (N, >=3), got {colors.shape}")
+        if colors.shape[0] == original_count:
+            colors = colors[point_keep]
+        elif colors.shape[0] != points.shape[0]:
+            raise ValueError("colors must have the same row count as points")
     if voxel_size is None or voxel_size <= 0 or points.shape[0] == 0:
         return points, colors
     keys = np.floor(points / float(voxel_size)).astype(np.int64)
@@ -309,6 +345,51 @@ def random_downsample(points: np.ndarray, max_points: int, seed: int = 20260702)
     return points[indices]
 
 
+def prepare_working_points(cloud: PointCloud, voxel_size: float, max_points: int, seed: int) -> np.ndarray:
+    """Create the deterministic reduced point set used by ICP."""
+
+    points, _ = voxel_downsample(cloud.points, voxel_size=voxel_size)
+    return random_downsample(points, max_points=max_points, seed=seed)
+
+
+def scale_point_cloud(cloud: PointCloud, scale: float) -> PointCloud:
+    """Return a point cloud converted by a positive unit scale."""
+
+    if not np.isfinite(scale) or scale <= 0:
+        raise ValueError(f"point-cloud scale must be a positive finite value, got {scale}")
+    points, keep = _coerce_points_with_mask(cloud.points)
+    colors = None
+    if cloud.colors is not None:
+        color_array = np.asarray(cloud.colors)
+        if color_array.ndim != 2 or color_array.shape[0] != keep.shape[0] or color_array.shape[1] < 3:
+            raise ValueError(f"colors for cloud {cloud.name!r} do not match its points")
+        colors = color_array[:, :3][keep]
+    return PointCloud(points=points * scale, colors=colors, name=cloud.name)
+
+
+def concatenate_point_clouds(clouds: list[PointCloud]) -> tuple[np.ndarray, np.ndarray | None]:
+    """Concatenate clouds and preserve colors only when every cloud has them."""
+
+    if not clouds:
+        return np.zeros((0, 3), dtype=np.float64), None
+    point_arrays: list[np.ndarray] = []
+    keep_masks: list[np.ndarray] = []
+    for cloud in clouds:
+        points, keep = _coerce_points_with_mask(cloud.points)
+        point_arrays.append(points)
+        keep_masks.append(keep)
+    points = np.vstack(point_arrays).astype(np.float64)
+    if all(cloud.colors is not None for cloud in clouds):
+        color_arrays = []
+        for cloud, keep in zip(clouds, keep_masks, strict=True):
+            colors = np.asarray(cloud.colors)
+            if colors.ndim != 2 or colors.shape[0] != cloud.points.shape[0] or colors.shape[1] < 3:
+                raise ValueError(f"colors for cloud {cloud.name!r} do not match its points")
+            color_arrays.append(colors[:, :3][keep])
+        return points, np.clip(np.vstack(color_arrays), 0, 255).astype(np.uint8)
+    return points, None
+
+
 def nearest_neighbors(source: np.ndarray, target: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     source = validate_points(source)
     target = validate_points(target)
@@ -316,10 +397,7 @@ def nearest_neighbors(source: np.ndarray, target: np.ndarray) -> tuple[np.ndarra
         return np.zeros((0,), dtype=np.float64), np.zeros((0,), dtype=np.int64)
     try:
         from scipy.spatial import cKDTree  # type: ignore
-
-        distances, indices = cKDTree(target).query(source, k=1, workers=-1)
-        return distances.astype(np.float64), indices.astype(np.int64)
-    except Exception:
+    except ImportError:
         chunk = 4096
         all_distances = np.empty((source.shape[0],), dtype=np.float64)
         all_indices = np.empty((source.shape[0],), dtype=np.int64)
@@ -332,6 +410,8 @@ def nearest_neighbors(source: np.ndarray, target: np.ndarray) -> tuple[np.ndarra
             all_indices[start:stop] = indices
             all_distances[start:stop] = np.sqrt(np.maximum(dist_sq[np.arange(stop - start), indices], 0.0))
         return all_distances, all_indices
+    distances, indices = cKDTree(target).query(source, k=1, workers=-1)
+    return distances.astype(np.float64), indices.astype(np.int64)
 
 
 def icp_point_to_point(
@@ -346,12 +426,24 @@ def icp_point_to_point(
 ) -> IcpResult:
     source_points = validate_points(source_points)
     target_points = validate_points(target_points)
+    if min_pairs < 3:
+        raise ValueError("min_pairs must be at least 3")
     if source_points.shape[0] < min_pairs or target_points.shape[0] < min_pairs:
         raise ValueError("source and target need enough points for ICP")
+    if max_iterations <= 0:
+        raise ValueError("max_iterations must be greater than zero")
+    if tolerance < 0:
+        raise ValueError("tolerance must be non-negative")
+    if distance_threshold is not None and distance_threshold <= 0:
+        raise ValueError("distance_threshold must be greater than zero when provided")
     if not (0.0 < trim_fraction <= 1.0):
         raise ValueError("trim_fraction must be in (0, 1]")
 
     transform = np.eye(4, dtype=np.float64) if init_transform is None else np.asarray(init_transform, dtype=np.float64)
+    if transform.shape != (4, 4) or not np.all(np.isfinite(transform)):
+        raise ValueError("init_transform must be a finite 4x4 matrix")
+    if not np.allclose(transform[3], [0.0, 0.0, 0.0, 1.0], atol=1e-8):
+        raise ValueError("init_transform must have a homogeneous [0, 0, 0, 1] last row")
     transformed = apply_transform(source_points, transform)
     previous_error = np.inf
     history: list[dict[str, float | int]] = []
@@ -456,7 +548,7 @@ def make_synthetic_hand_points(seed: int = 7) -> np.ndarray:
     bases = np.array([-0.028, -0.012, 0.004, 0.019, 0.032], dtype=np.float64)
     lengths = np.array([0.052, 0.074, 0.082, 0.073, 0.058], dtype=np.float64)
     radii = np.array([0.0065, 0.0068, 0.0072, 0.0065, 0.0058], dtype=np.float64)
-    for finger_id, (base_x, length, radius) in enumerate(zip(bases, lengths, radii)):
+    for finger_id, (base_x, length, radius) in enumerate(zip(bases, lengths, radii, strict=True)):
         n = 420
         t = rng.uniform(0, 1, n)
         a = rng.uniform(0, 2 * np.pi, n)

@@ -12,10 +12,10 @@ if [[ ! -x "$VENV_DIR/bin/python" ]]; then
 fi
 
 "$VENV_DIR/bin/python" -m pip install --upgrade pip
-"$VENV_DIR/bin/python" -m pip install -r requirements.txt
+"$VENV_DIR/bin/python" -m pip install -e '.[dev]'
 
-"$VENV_DIR/bin/python" demo/run_mock_rgbd_pipeline.py --output-dir outputs/mock_rgbd_demo
-"$VENV_DIR/bin/python" -m pytest tests/test_mock_rgbd_pipeline.py
-"$VENV_DIR/bin/python" scripts/run_icp_registration.py --selftest
+PYTHONPATH=src "$VENV_DIR/bin/python" -m hand_recon demo --config configs/mock_rgbd.json
+"$VENV_DIR/bin/python" -m pytest -q
+PYTHONPATH=src "$VENV_DIR/bin/python" -m hand_recon verify
 
 printf '\nKR1 bootstrap and checks passed.\n'

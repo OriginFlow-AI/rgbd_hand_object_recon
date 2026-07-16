@@ -6,7 +6,9 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import os
 import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -36,7 +38,9 @@ class AgentReport:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output-html", type=Path, default=ROOT / "outputs" / "reports" / "multi_agent_validation_report.html")
+    parser.add_argument(
+        "--output-html", type=Path, default=ROOT / "outputs" / "reports" / "multi_agent_validation_report.html"
+    )
     parser.add_argument("--output-json", type=Path, default=None)
     parser.add_argument("--skip-commands", action="store_true")
     parser.add_argument("--command-timeout-sec", type=int, default=300)
@@ -45,6 +49,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.command_timeout_sec <= 0:
+        raise SystemExit("--command-timeout-sec must be greater than zero")
     command_results = [] if args.skip_commands else run_validation_commands(args.command_timeout_sec)
     context = collect_context(command_results)
     agents = build_agent_reports(context)
@@ -64,7 +70,11 @@ def main() -> int:
     output_json.parent.mkdir(parents=True, exist_ok=True)
     output_json.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
-    print(json.dumps({"status": overall_status, "html": str(args.output_html), "json": str(output_json)}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {"status": overall_status, "html": str(args.output_html), "json": str(output_json)}, ensure_ascii=False
+        )
+    )
     return 0 if overall_status in {"ok", "warning"} else 1
 
 
@@ -72,7 +82,7 @@ def run_validation_commands(timeout_sec: int) -> list[dict[str, Any]]:
     commands = [
         ("KR1 mock RGB-D checks", ["bash", "scripts/run_kr1_checks.sh"]),
         ("KR3 interface checks", ["bash", "scripts/run_kr3_checks.sh"]),
-        ("Full pytest suite", ["python3", "-m", "pytest"]),
+        ("Full pytest suite", [sys.executable, "-m", "pytest"]),
     ]
     return [run_command(name, cmd, timeout_sec) for name, cmd in commands]
 
@@ -83,6 +93,7 @@ def run_command(name: str, cmd: list[str], timeout_sec: int) -> dict[str, Any]:
         completed = subprocess.run(
             cmd,
             cwd=ROOT,
+            env={**os.environ, "PYTHON_BIN": sys.executable},
             capture_output=True,
             text=True,
             timeout=timeout_sec,
@@ -120,7 +131,10 @@ def collect_context(command_results: list[dict[str, Any]]) -> dict[str, Any]:
         ("KR3 check script", ROOT / "scripts" / "run_kr3_checks.sh"),
         ("KR3 mock output", ROOT / "outputs" / "mock_rgbd_demo" / "kr3" / "hand_result.npz"),
         ("KR1 quality report", ROOT / "outputs" / "mock_rgbd_demo" / "quality_report.json"),
-        ("KR1 normalized output", ROOT / "outputs" / "mock_rgbd_demo" / "scale" / "root_translation_optimized_hands.npz"),
+        (
+            "KR1 normalized output",
+            ROOT / "outputs" / "mock_rgbd_demo" / "scale" / "root_translation_optimized_hands.npz",
+        ),
     ]
     artifacts = [
         {
@@ -152,7 +166,7 @@ def inspect_kr3_npz(path: Path) -> dict[str, dict[str, Any]]:
     if not path.exists():
         return {}
     fields: dict[str, dict[str, Any]] = {}
-    with np.load(path, allow_pickle=True) as data:
+    with np.load(path, allow_pickle=False) as data:
         for key in data.files:
             value = data[key]
             fields[key] = {"shape": list(value.shape), "dtype": str(value.dtype)}
@@ -173,26 +187,23 @@ def code_agent_report(context: dict[str, Any]) -> AgentReport:
     required_paths = [
         "src/hand_recon/interfaces/hand_result.py",
         "src/hand_recon/interfaces/__init__.py",
-        "demo/run_mock_rgbd_pipeline.py",
+        "src/hand_recon/pipelines/mock_rgbd.py",
     ]
-    checks = [
-        file_check(path, f"{path} exists")
-        for path in required_paths
-    ]
-    demo_text = read_text(ROOT / "demo" / "run_mock_rgbd_pipeline.py")
+    checks = [file_check(path, f"{path} exists") for path in required_paths]
+    pipeline_text = read_text(ROOT / "src" / "hand_recon" / "pipelines" / "mock_rgbd.py")
     checks.append(
         CheckItem(
-            "Demo writes KR3 NPZ",
-            "pass" if "write_kr3_hand_result_npz" in demo_text and "kr3_hand_result" in demo_text else "fail",
-            "demo/run_mock_rgbd_pipeline.py",
-            "Demo should emit outputs/mock_rgbd_demo/kr3/hand_result.npz.",
+            "Pipeline writes KR3 NPZ",
+            "pass" if "write_kr3_hand_result_npz" in pipeline_text and "kr3_hand_result" in pipeline_text else "fail",
+            "src/hand_recon/pipelines/mock_rgbd.py",
+            "Pipeline should emit outputs/mock_rgbd_demo/kr3/hand_result.npz.",
         )
     )
     status = status_from_checks(checks)
     return AgentReport(
         role="代码与接口智能体",
         status=status,
-        summary="检查 KR3 adapter、demo 接入和接口代码是否存在。",
+        summary="检查 KR3 adapter、pipeline 接入和接口代码是否存在。",
         checks=checks,
         risks=[] if status == "pass" else ["KR3 接口代码或 demo 接入不完整。"],
     )
@@ -226,7 +237,8 @@ def schema_agent_report(context: dict[str, Any]) -> AgentReport:
     checks.append(
         CheckItem(
             "source_system enum",
-            "pass" if {"ground_truth_system", "dma_vision", "super_labelator"}.issubset(
+            "pass"
+            if {"ground_truth_system", "dma_vision", "super_labelator"}.issubset(
                 set(properties.get("source_system", {}).get("items", {}).get("enum", []))
             )
             else "fail",
@@ -238,7 +250,7 @@ def schema_agent_report(context: dict[str, Any]) -> AgentReport:
     return AgentReport(
         role="Schema 智能体",
         status=status,
-        summary="检查 KR3 机器可读 schema 是否覆盖 22DOF、21 joints、mesh 和三类来源系统。",
+        summary="检查 KR3 机器可读 schema 是否覆盖 22DOF、21 joints、mesh 和来源系统。",
         checks=checks,
         risks=[] if status == "pass" else ["schema 中关键字段缺失或 shape 约定不一致。"],
     )
@@ -293,8 +305,7 @@ def doc_agent_report(context: dict[str, Any]) -> AgentReport:
         ("README entry", "KR3" in readme_text and "hand_result_schema.json" in readme_text),
     ]
     checks = [
-        CheckItem(name, "pass" if ok else "fail", "docs/kr3_hand_result_interface.md / README.md")
-        for name, ok in terms
+        CheckItem(name, "pass" if ok else "fail", "docs/kr3_hand_result_interface.md / README.md") for name, ok in terms
     ]
     status = status_from_checks(checks)
     return AgentReport(
@@ -351,7 +362,9 @@ def render_html(payload: dict[str, Any]) -> str:
     status = payload["overall_status"]
     title = "多智能体协同校验报告"
     agent_cards = "\n".join(render_agent(agent) for agent in payload["agents"])
-    command_cards = "\n".join(render_command(result) for result in payload["command_results"]) or "<p>本次跳过命令执行。</p>"
+    command_cards = (
+        "\n".join(render_command(result) for result in payload["command_results"]) or "<p>本次跳过命令执行。</p>"
+    )
     artifact_rows = "\n".join(
         f"<tr><td>{escape(item['name'])}</td><td><code>{escape(item['path'])}</code></td><td>{badge('pass' if item['exists'] else 'fail')}</td><td>{item['size_bytes']}</td></tr>"
         for item in payload["artifacts"]
@@ -393,7 +406,7 @@ def render_html(payload: dict[str, Any]) -> str:
 <body>
   <header>
     <h1>{title}</h1>
-    <div>生成时间：{escape(payload['generated_at'])}</div>
+    <div>生成时间：{escape(payload["generated_at"])}</div>
   </header>
   <main>
     <section class="summary">
@@ -422,13 +435,13 @@ def render_html(payload: dict[str, Any]) -> str:
 
 def render_agent(agent: dict[str, Any]) -> str:
     checks = "\n".join(
-        f"<li>{badge(item['status'])} <strong>{escape(item['name'])}</strong> <span class=\"muted\">{escape(item['evidence'])}</span><br><span>{escape(item.get('detail', ''))}</span></li>"
+        f'<li>{badge(item["status"])} <strong>{escape(item["name"])}</strong> <span class="muted">{escape(item["evidence"])}</span><br><span>{escape(item.get("detail", ""))}</span></li>'
         for item in agent["checks"]
     )
     risks = "\n".join(f"<li>{escape(risk)}</li>" for risk in agent["risks"]) or "<li>暂无新增风险。</li>"
     return f"""<div class="card">
-  <h3>{escape(agent['role'])} {badge(agent['status'])}</h3>
-  <p>{escape(agent['summary'])}</p>
+  <h3>{escape(agent["role"])} {badge(agent["status"])}</h3>
+  <p>{escape(agent["summary"])}</p>
   <ul>{checks}</ul>
   <p class="muted">风险/备注</p>
   <ul>{risks}</ul>
@@ -438,8 +451,8 @@ def render_agent(agent: dict[str, Any]) -> str:
 def render_command(result: dict[str, Any]) -> str:
     output = "\n".join(part for part in [result.get("stdout_tail", ""), result.get("stderr_tail", "")] if part)
     return f"""<div class="card">
-  <h3>{escape(result['name'])} {badge(result['status'])}</h3>
-  <p><code>{escape(result['cmd'])}</code> returncode={escape(str(result['returncode']))}</p>
+  <h3>{escape(result["name"])} {badge(result["status"])}</h3>
+  <p><code>{escape(result["cmd"])}</code> returncode={escape(str(result["returncode"]))}</p>
   <pre>{escape(output)}</pre>
 </div>"""
 
@@ -447,7 +460,7 @@ def render_command(result: dict[str, Any]) -> str:
 def badge(status: str) -> str:
     label = {"pass": "PASS", "fail": "FAIL", "warning": "WARN", "ok": "OK"}.get(status, status.upper())
     class_name = "pass" if status in {"pass", "ok"} else "warning" if status == "warning" else "fail"
-    return f"<span class=\"badge {class_name}\">{label}</span>"
+    return f'<span class="badge {class_name}">{label}</span>'
 
 
 def agent_to_dict(agent: AgentReport) -> dict[str, Any]:

@@ -144,13 +144,13 @@ mock normalized hand result into a unified hand interface with 22DoF angles,
 ## Demo Command
 
 ```bash
-python3 demo/run_mock_rgbd_pipeline.py --output-dir outputs/mock_rgbd_demo
+PYTHONPATH=src python3 -m hand_recon demo --config configs/mock_rgbd.json
 ```
 
 Optional:
 
 ```bash
-python3 demo/run_mock_rgbd_pipeline.py \
+PYTHONPATH=src python3 -m hand_recon demo \
   --scene-dir mock_data/rgbd_scene_001 \
   --output-dir outputs/mock_rgbd_demo \
   --voxel-size-m 0.003 \

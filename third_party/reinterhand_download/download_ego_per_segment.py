@@ -5,9 +5,12 @@
 # LICENSE file in the root directory of this source tree.
 # 
 
-import os
-import os.path as osp
+from pathlib import Path
 from tqdm import tqdm
+
+from download_utils import BASE_URL, download_file, extract_multipart
+
+ROOT = Path(__file__).resolve().parent
 
 capture_id_list = [
         'm--20210701--1058--0000000--pilot--relightablehandsy--participant0--two-hands',
@@ -36,26 +39,16 @@ name_list = {
 }
 
 def download(capture_id):
-    # change the working directory
-    os.makedirs(osp.join(capture_id, 'Ego_cameras'), exist_ok=True)
-    current_path = os.path.dirname(os.path.abspath(__file__))
-    os.chdir(osp.join(current_path, capture_id, 'Ego_cameras'))
-
-    # download
+    output_dir = ROOT / capture_id / 'Ego_cameras'
     for name in name_list[capture_id]:
-        cmd = 'wget https://fb-baas-f32eacb9-8abb-11eb-b2b8-4857dd089e15.s3.amazonaws.com/ReInterHand/' + capture_id + '/Ego_cameras/envmap_per_segment.tar.gz' + name
-        os.system(cmd)
+        download_file(f"{BASE_URL}/{capture_id}/Ego_cameras/envmap_per_segment.tar.gz{name}", output_dir)
+    extract_multipart(output_dir, 'envmap_per_segment.tar.gz')
 
-    # decompress
-    cmd = 'cat envmap_per_segment.tar.gz* | tar zxvf -'
-    os.system(cmd)
-
-    # back to the current path
-    os.chdir(current_path)
-
-for capture_id in tqdm(capture_id_list):
-    os.makedirs(capture_id, exist_ok=True)
-
-    download(capture_id)
+def main():
+    for capture_id in tqdm(capture_id_list):
+        (ROOT / capture_id).mkdir(parents=True, exist_ok=True)
+        download(capture_id)
 
 
+if __name__ == '__main__':
+    main()

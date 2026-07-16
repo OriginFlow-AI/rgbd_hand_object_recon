@@ -21,7 +21,9 @@ DEFAULT_ICP_DIR = ROOT / "outputs" / "reinterhand_best_right_sequence_icp"
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--icp-dir", type=Path, default=DEFAULT_ICP_DIR)
-    parser.add_argument("--output-html", type=Path, default=ROOT / "outputs" / "reports" / "best_data_reinterhand_visual_report.html")
+    parser.add_argument(
+        "--output-html", type=Path, default=ROOT / "outputs" / "reports" / "best_data_reinterhand_visual_report.html"
+    )
     parser.add_argument("--input-scale", type=float, default=0.001)
     return parser.parse_args()
 
@@ -47,9 +49,11 @@ def generate_best_data_visual_report(
 
     icp_dir = Path(icp_dir)
     output_html = Path(output_html)
+    if not np.isfinite(input_scale) or input_scale <= 0:
+        raise ValueError("input_scale must be a positive finite value")
     summary_path = icp_dir / "icp_summary.json"
     if not summary_path.exists():
-        raise SystemExit(f"missing ICP summary: {summary_path}")
+        raise FileNotFoundError(f"missing ICP summary: {summary_path}")
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
 
     target_path = ROOT / summary["target"]
@@ -89,7 +93,6 @@ def render_report(
 ) -> str:
     metrics = icp_summary.get("sources", [])
     rmse_values = [float(item.get("rmse", 0.0)) for item in metrics]
-    mean_values = [float(item.get("mean_error", 0.0)) for item in metrics]
     fitness_values = [float(item.get("fitness", 0.0)) for item in metrics]
     selected = pilot_summary.get("selected_capture_summary", {})
     metric_cards = [
@@ -118,11 +121,15 @@ def render_report(
     )
     raw_series = [("anchor", target["points"], "#4a90e2")] + [
         (f"src{i}", item["points"], color)
-        for i, (item, color) in enumerate(zip(sources, ["#4d9b53", "#f0a202", "#d95f9f", "#6b6bd6"]), start=1)
+        for i, (item, color) in enumerate(
+            zip(sources, ["#4d9b53", "#f0a202", "#d95f9f", "#6b6bd6"], strict=False), start=1
+        )
     ]
     aligned_series = [("anchor", target["points"], "#4a90e2")] + [
         (f"aligned{i}", item["points"], color)
-        for i, (item, color) in enumerate(zip(aligned, ["#4d9b53", "#f0a202", "#d95f9f", "#6b6bd6"]), start=1)
+        for i, (item, color) in enumerate(
+            zip(aligned, ["#4d9b53", "#f0a202", "#d95f9f", "#6b6bd6"], strict=False), start=1
+        )
     ]
     return f"""<!doctype html>
 <html lang="zh-CN">
@@ -175,7 +182,7 @@ def render_report(
       <h1>Re:InterHand 最佳数据可视化报告</h1>
       <div class="muted">生成时间：{escape(generated_at)} · Capture：{escape(CAPTURE)}</div>
       <p class="note">{escape(source_note)}</p>
-      <div class="metric-grid">{''.join(render_metric_card(*item) for item in metric_cards)}</div>
+      <div class="metric-grid">{"".join(render_metric_card(*item) for item in metric_cards)}</div>
     </header>
     <main>
       <section class="section grid2">
@@ -183,7 +190,7 @@ def render_report(
           <div class="viz">{mesh_triptych(target, "Step 1  anchor MANO mesh topology")}</div>
           <div class="card-body">
             <h3>Step 1：锚点手部 mesh</h3>
-            <p>使用真实 MANO 拓扑，单帧包含 {target['points'].shape[0]} 个顶点和 {target['faces'].shape[0]} 个三角面片。三视图用于检查手部形状、尺度和拓扑完整性。</p>
+            <p>使用真实 MANO 拓扑，单帧包含 {target["points"].shape[0]} 个顶点和 {target["faces"].shape[0]} 个三角面片。三视图用于检查手部形状、尺度和拓扑完整性。</p>
           </div>
         </article>
         <article class="card">
@@ -207,7 +214,7 @@ def render_report(
           <div class="viz">{projection_triptych([("merged", merged["points"], "#4a90e2")], "Step 4  merged aligned voxel cloud")}</div>
           <div class="card-body">
             <h3>Step 4：对齐融合点云</h3>
-            <p>对齐后的帧被体素融合，得到 {merged['points'].shape[0]} 个点。该结果适合做重建稳定性、局部形变和配准误差诊断。</p>
+            <p>对齐后的帧被体素融合，得到 {merged["points"].shape[0]} 个点。该结果适合做重建稳定性、局部形变和配准误差诊断。</p>
           </div>
         </article>
       </section>
@@ -233,7 +240,7 @@ def render_report(
         <h2>配准明细</h2>
         <table>
           <thead><tr><th>源帧</th><th>状态</th><th>迭代</th><th>mean error</th><th>RMSE</th><th>fitness</th></tr></thead>
-          <tbody>{''.join(f'<tr><td><code>{escape(a)}</code></td><td>{escape(b)}</td><td>{escape(c)}</td><td>{escape(d)}</td><td>{escape(e)}</td><td>{escape(f)}</td></tr>' for a, b, c, d, e, f in rows)}</tbody>
+          <tbody>{"".join(f"<tr><td><code>{escape(a)}</code></td><td>{escape(b)}</td><td>{escape(c)}</td><td>{escape(d)}</td><td>{escape(e)}</td><td>{escape(f)}</td></tr>" for a, b, c, d, e, f in rows)}</tbody>
         </table>
       </section>
 
@@ -276,7 +283,9 @@ def mesh_triptych(mesh: dict[str, np.ndarray], title: str) -> str:
         mapped = map_points(projected, bounds, x0 + 18, 34, panel_w - 36, height - 70)
         for face in mesh["faces"][::2]:
             pts = " ".join(f"{mapped[int(i)][0]:.2f},{mapped[int(i)][1]:.2f}" for i in face)
-            pieces.append(f'<polygon points="{pts}" fill="#cdeeff" stroke="#4a90e2" stroke-width="0.75" opacity=".35"/>')
+            pieces.append(
+                f'<polygon points="{pts}" fill="#cdeeff" stroke="#4a90e2" stroke-width="0.75" opacity=".35"/>'
+            )
         for x, y in mapped:
             pieces.append(f'<circle cx="{x:.2f}" cy="{y:.2f}" r="1.25" fill="#1f5f9f" opacity=".72"/>')
     pieces.append(f'<text x="14" y="{height - 12}" font-size="12" font-weight="700">{escape(title)}</text>')
@@ -317,18 +326,24 @@ def metric_bar_chart(labels: list[str], values: list[float], title: str, unit: s
     max_value = max(values + [1e-9]) * 1.15
     pieces = [f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="{escape(title)}">']
     pieces.append('<rect x="0" y="0" width="760" height="410" fill="#ffffff"/>')
-    pieces.append(f'<line x1="{left}" y1="{height-bottom}" x2="{width-right}" y2="{height-bottom}" stroke="#97a4b2"/>')
-    pieces.append(f'<line x1="{left}" y1="{top}" x2="{left}" y2="{height-bottom}" stroke="#97a4b2"/>')
+    pieces.append(
+        f'<line x1="{left}" y1="{height - bottom}" x2="{width - right}" y2="{height - bottom}" stroke="#97a4b2"/>'
+    )
+    pieces.append(f'<line x1="{left}" y1="{top}" x2="{left}" y2="{height - bottom}" stroke="#97a4b2"/>')
     area_w = width - left - right
     bar_w = area_w / max(1, len(values)) * 0.58
-    for idx, (label, value) in enumerate(zip(labels, values)):
+    for idx, (label, value) in enumerate(zip(labels, values, strict=False)):
         cx = left + (idx + 0.5) * area_w / max(1, len(values))
         h = (height - bottom - top) * value / max_value
         x = cx - bar_w / 2
         y = height - bottom - h
-        pieces.append(f'<rect x="{x:.2f}" y="{y:.2f}" width="{bar_w:.2f}" height="{h:.2f}" fill="#4a90e2" opacity=".86"/>')
+        pieces.append(
+            f'<rect x="{x:.2f}" y="{y:.2f}" width="{bar_w:.2f}" height="{h:.2f}" fill="#4a90e2" opacity=".86"/>'
+        )
         pieces.append(f'<text x="{cx:.2f}" y="{y - 8:.2f}" font-size="12" text-anchor="middle">{value:.3f}</text>')
-        pieces.append(f'<text transform="translate({cx - 4:.2f},{height - 102}) rotate(58)" font-size="10">{escape(label)}</text>')
+        pieces.append(
+            f'<text transform="translate({cx - 4:.2f},{height - 102}) rotate(58)" font-size="10">{escape(label)}</text>'
+        )
     pieces.append(f'<text x="14" y="20" font-size="13" font-weight="700">{escape(title)} ({escape(unit)})</text>')
     pieces.append("</svg>")
     return "".join(pieces)
@@ -358,7 +373,11 @@ def read_ply_mesh(path: Path, scale: float) -> dict[str, np.ndarray]:
         values = line.split()
         if len(values) >= 4 and int(values[0]) == 3:
             faces.append([int(values[1]), int(values[2]), int(values[3])])
-    return {"points": np.asarray(vertices, dtype=np.float64), "faces": np.asarray(faces, dtype=np.int64), "path": str(path)}
+    return {
+        "points": np.asarray(vertices, dtype=np.float64),
+        "faces": np.asarray(faces, dtype=np.int64),
+        "path": str(path),
+    }
 
 
 def point_bounds(points: np.ndarray) -> tuple[float, float, float, float]:
@@ -368,7 +387,9 @@ def point_bounds(points: np.ndarray) -> tuple[float, float, float, float]:
     return float(mins[0] - pad[0]), float(maxs[0] + pad[0]), float(mins[1] - pad[1]), float(maxs[1] + pad[1])
 
 
-def map_points(points: np.ndarray, bounds: tuple[float, float, float, float], x: float, y: float, w: float, h: float) -> np.ndarray:
+def map_points(
+    points: np.ndarray, bounds: tuple[float, float, float, float], x: float, y: float, w: float, h: float
+) -> np.ndarray:
     min_x, max_x, min_y, max_y = bounds
     scale_x = w / max(max_x - min_x, 1e-9)
     scale_y = h / max(max_y - min_y, 1e-9)

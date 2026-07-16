@@ -17,13 +17,16 @@ sys.path.insert(0, str(ROOT / "src"))
 from hand_recon.icp import (  # noqa: E402
     PointCloud,
     apply_transform,
+    concatenate_point_clouds,
     icp_point_to_point,
     load_point_cloud,
-    random_downsample,
+    prepare_working_points,
     run_synthetic_selftest,
+    scale_point_cloud,
     voxel_downsample,
     write_ascii_ply,
 )
+from hand_recon.io.json_io import read_json_object, write_json  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -39,7 +42,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--output-dir", type=Path, default=ROOT / "outputs" / "icp_registration")
     parser.add_argument("--npz-points-key", default=None, help="Specific point array key when reading .npz files.")
-    parser.add_argument("--voxel-size-m", type=float, default=0.002, help="Voxel downsample size for ICP working clouds.")
+    parser.add_argument(
+        "--voxel-size-m", type=float, default=0.002, help="Voxel downsample size for ICP working clouds."
+    )
     parser.add_argument(
         "--input-scale",
         type=float,
@@ -63,7 +68,7 @@ def parse_args() -> argparse.Namespace:
 def load_initial_transforms(path: Path | None) -> dict[str, np.ndarray]:
     if path is None:
         return {}
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    data = read_json_object(path)
     out = {}
     for key, value in data.items():
         arr = np.asarray(value, dtype=np.float64)
@@ -73,7 +78,9 @@ def load_initial_transforms(path: Path | None) -> dict[str, np.ndarray]:
     return out
 
 
-def find_init_transform(source_path: Path, source_cloud: PointCloud, mapping: dict[str, np.ndarray]) -> np.ndarray | None:
+def find_init_transform(
+    source_path: Path, source_cloud: PointCloud, mapping: dict[str, np.ndarray]
+) -> np.ndarray | None:
     candidates = [
         str(source_path),
         source_path.as_posix(),
@@ -85,30 +92,6 @@ def find_init_transform(source_path: Path, source_cloud: PointCloud, mapping: di
         if key in mapping:
             return mapping[key]
     return None
-
-
-def prepare_working_points(cloud: PointCloud, voxel_size_m: float, max_points: int, seed: int) -> np.ndarray:
-    points, _ = voxel_downsample(cloud.points, voxel_size=voxel_size_m)
-    return random_downsample(points, max_points=max_points, seed=seed)
-
-
-def scale_cloud(cloud: PointCloud, scale: float) -> PointCloud:
-    if scale == 1.0:
-        return cloud
-    return PointCloud(points=cloud.points * scale, colors=cloud.colors, name=cloud.name)
-
-
-def concatenate_clouds(clouds: list[PointCloud]) -> tuple[np.ndarray, np.ndarray | None]:
-    points = np.vstack([cloud.points for cloud in clouds]).astype(np.float64)
-    if all(cloud.colors is not None for cloud in clouds):
-        colors = np.vstack([cloud.colors for cloud in clouds if cloud.colors is not None]).astype(np.uint8)
-        return points, colors
-    return points, None
-
-
-def write_summary(path: Path, summary: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def run_registration(args: argparse.Namespace) -> dict[str, Any]:
@@ -126,7 +109,9 @@ def run_registration(args: argparse.Namespace) -> dict[str, Any]:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     init_transforms = load_initial_transforms(args.init_transforms_json)
 
-    target_cloud = scale_cloud(load_point_cloud(target_path, npz_points_key=args.npz_points_key), args.input_scale)
+    target_cloud = scale_point_cloud(
+        load_point_cloud(target_path, npz_points_key=args.npz_points_key), args.input_scale
+    )
     target_work = prepare_working_points(target_cloud, args.voxel_size_m, args.max_points, seed=11)
     aligned_clouds = [target_cloud]
     per_source = []
@@ -135,7 +120,9 @@ def run_registration(args: argparse.Namespace) -> dict[str, Any]:
     write_ascii_ply(target_out, target_cloud.points, target_cloud.colors)
 
     for index, source_path in enumerate(source_paths, start=1):
-        source_cloud = scale_cloud(load_point_cloud(source_path, npz_points_key=args.npz_points_key), args.input_scale)
+        source_cloud = scale_point_cloud(
+            load_point_cloud(source_path, npz_points_key=args.npz_points_key), args.input_scale
+        )
         source_work = prepare_working_points(source_cloud, args.voxel_size_m, args.max_points, seed=100 + index)
         init_transform = find_init_transform(source_path, source_cloud, init_transforms)
         result = icp_point_to_point(
@@ -163,7 +150,7 @@ def run_registration(args: argparse.Namespace) -> dict[str, Any]:
             }
         )
 
-    merged_points, merged_colors = concatenate_clouds(aligned_clouds)
+    merged_points, merged_colors = concatenate_point_clouds(aligned_clouds)
     merged_points, merged_colors = voxel_downsample(merged_points, merged_colors, voxel_size=args.voxel_size_m)
     merged_path = args.output_dir / "merged_aligned_voxel.ply"
     write_ascii_ply(merged_path, merged_points, merged_colors)
@@ -186,7 +173,7 @@ def run_registration(args: argparse.Namespace) -> dict[str, Any]:
         "sources": per_source,
         "merged_output_ply": str(merged_path),
     }
-    write_summary(args.output_dir / "icp_summary.json", summary)
+    write_json(args.output_dir / "icp_summary.json", summary)
     return summary
 
 
@@ -197,7 +184,11 @@ def main() -> int:
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0 if result["status"] == "ok" else 1
     summary = run_registration(args)
-    print(json.dumps({"status": "ok", "summary_json": str(args.output_dir / "icp_summary.json")}, indent=2, ensure_ascii=False))
+    print(
+        json.dumps(
+            {"status": "ok", "summary_json": str(args.output_dir / "icp_summary.json")}, indent=2, ensure_ascii=False
+        )
+    )
     failed = [item for item in summary["sources"] if item["status"] not in ("converged", "max_iterations")]
     return 1 if failed else 0
 

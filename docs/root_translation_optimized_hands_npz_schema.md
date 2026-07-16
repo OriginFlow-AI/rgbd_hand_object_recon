@@ -1,6 +1,8 @@
 # root_translation_optimized_hands.npz 字段说明
 
-本文档说明稳定流程最终输出文件 `root_translation_optimized_hands.npz` 的字段含义。
+本文档说明规范化输出文件 `root_translation_optimized_hands.npz` 的字段含义。当前 mock
+流程由 `hand_recon.normalized_output` 生成该文件；更完整的 stereo/WiLoR 流程可按同一字段
+契约接入。
 
 输出路径通常为：
 
@@ -8,10 +10,10 @@
 $OUT_DIR/scale/root_translation_optimized_hands.npz
 ```
 
-该文件由以下脚本生成：
+当前工程生成入口：
 
 ```text
-tools/stereo_shared_scale_optimizer.py
+hand_recon.normalized_output.write_normalized_hand_npz
 ```
 
 当前流程坐标系约定：
@@ -48,11 +50,15 @@ tools/stereo_shared_scale_optimizer.py
 | `anchor_mask` | `(N, 21)` | 当前优化实际使用的 anchor joint mask。 |
 | `visible_anchor_mask` | `(N, 21)` | 当前无遮挡版本中等同于 `anchor_mask`，占位兼容字段。 |
 | `anchor_confidence` | `(N, 21)` | 当前无遮挡版本中 anchor 有效为 1，否则 0。 |
-| `anchor_confidence_source` | scalar object | 当前为 `anchor_mask_placeholder`，表示未接遮挡置信度。 |
+| `anchor_confidence_source` | scalar Unicode | 当前为 `anchor_mask_placeholder`，表示未接遮挡置信度。 |
 | `frame_confidence` | `(N,)` | 当前帧/当前手的 anchor 平均置信度。无遮挡版本中较简单。 |
 | `frame_status` | `(N,)` | `ok` 或 `invalid`。 |
-| `scale_meta_json` | scalar object | shared scale 估计的元信息 JSON。 |
+| `scale_meta_json` | scalar Unicode | shared scale 估计的元信息 JSON。 |
 | `summary_json` | `(N,)` | 每一行结果的摘要 JSON。 |
+
+所有字符串/JSON 字段使用 NumPy Unicode dtype；当前 writer 不生成 object 数组，因此文件可用
+`np.load(path, allow_pickle=False)` 安全读取。旧版本若仍包含 object dtype，应在受信环境中一次性
+迁移，而不应让在线服务启用 pickle。
 
 ## 左右手区分
 

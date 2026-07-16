@@ -30,8 +30,19 @@ def generate_mock_rgbd_scene(
     """
 
     scene_dir = Path(scene_dir)
+    if view_count <= 0:
+        raise ValueError("view_count must be greater than zero")
+    if width <= 0 or height <= 0:
+        raise ValueError("width and height must be greater than zero")
     if scene_dir.exists() and overwrite:
-        shutil.rmtree(scene_dir)
+        # Only remove files owned by this generator. Deleting the caller's
+        # entire directory could destroy unrelated data placed alongside it.
+        (scene_dir / "cameras.json").unlink(missing_ok=True)
+        frames_dir = scene_dir / "frames"
+        if frames_dir.is_symlink() or frames_dir.is_file():
+            frames_dir.unlink()
+        elif frames_dir.exists():
+            shutil.rmtree(frames_dir)
     scene_dir.mkdir(parents=True, exist_ok=True)
 
     cameras_path = scene_dir / "cameras.json"
@@ -124,7 +135,7 @@ def _make_hand_points() -> np.ndarray:
     finger_x = [-0.085, -0.067, -0.049, -0.031, -0.016]
     lengths = [0.052, 0.068, 0.076, 0.066, 0.052]
     radii = [0.0065, 0.0070, 0.0072, 0.0067, 0.0058]
-    for idx, (x_base, length, radius) in enumerate(zip(finger_x, lengths, radii)):
+    for idx, (x_base, length, radius) in enumerate(zip(finger_x, lengths, radii, strict=True)):
         base = np.array([x_base, -0.012 + 0.002 * idx, 0.445], dtype=np.float64)
         axis = np.array([0.006 * (idx - 2), 0.002, length], dtype=np.float64)
         parts.append(_cylinder_surface(base=base, axis=axis, radius=radius, height_steps=38, angle_steps=20))

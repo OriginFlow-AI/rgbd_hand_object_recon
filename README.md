@@ -1,10 +1,103 @@
 # RGB-D Hand/Object Reconstruction
 
-本工程用于把 DexYCB 三维重建思路迁移到“更多视角覆盖”的手部数据上。当前已经从实验脚本整理为可集成的 Python package：核心能力在 `src/hand_recon/`，脚本只作为 CLI/验收包装。
+这是一个多视角 RGB-D 手部/物体重建工程。它把标定后的 RGB、深度和语义 mask
+融合到统一世界坐标系，输出点云、mock 位姿、质量指标、规范化手部结果以及 KR3
+统一接口文件。核心能力位于 `src/hand_recon/`；`demo/` 和 `scripts/` 只保留兼容的
+命令行包装。
 
-## 软件集成入口
+当前可稳定复现的是 deterministic mock RGB-D 闭环和点到点 ICP。mock pose、21
+关节点和 mesh 是几何占位结果，不等同于真实 MANO/UmeTrack 模型精度；
+Re:InterHand pilot 提供真实 MANO mesh，但不是原生 RGB-D。
 
-后续软件系统优先使用稳定 API，不直接依赖 `scripts/`：
+## 三分钟开始
+
+首次运行（创建 `.venv`、安装包与开发依赖、执行完整验收）：
+
+```bash
+bash scripts/bootstrap_kr1_demo.sh
+```
+
+生成 mock 重建和自包含 HTML 报告：
+
+```bash
+./run.sh
+```
+
+报告位置：
+
+```text
+outputs/reports/hand_reconstruction_visual_report.html
+```
+
+如果依赖已经安装，也可以不安装包、直接从源码运行：
+
+```bash
+PYTHONPATH=src python3 -m hand_recon demo --config configs/mock_rgbd.json
+PYTHONPATH=src python3 -m hand_recon verify
+python3 -m pytest -q
+```
+
+标准开发入口：
+
+```bash
+make setup
+make demo
+make check
+```
+
+## 核心执行流程
+
+```text
+cameras.json + rgb/depth/mask .npy
+  -> 校验场景、相机参数、数组 shape 和文件边界
+  -> depth 反投影到各 camera frame
+  -> camera_to_world 变换到 world frame
+  -> 多视角拼接和体素降采样
+  -> hand/object mask 分流
+  -> mock pose + 质量门禁
+  -> normalized hand NPZ
+  -> KR3 adapter + 安全 NPZ
+  -> HTML 报告或下游软件
+```
+
+主要模块职责：
+
+| 层 | 路径 | 职责 |
+|---|---|---|
+| public API | `src/hand_recon/api.py` | 软件集成的稳定入口 |
+| configuration | `src/hand_recon/config.py` | JSON 配置加载和严格校验 |
+| core geometry | `rgbd.py`、`reconstruction.py`、`icp.py` | 反投影、坐标变换、融合与 ICP |
+| pipelines | `src/hand_recon/pipelines/` | mock 和 Re:InterHand 流程编排 |
+| interfaces/adapters | `interfaces/`、`adapters/` | KR3 契约和兼容适配 |
+| I/O | `src/hand_recon/io/` | 原子 JSON/NPZ 写入和安全 NPZ 加载 |
+| reports | `src/hand_recon/reports/` | 自包含 HTML 报告 |
+
+详细依赖方向与设计理由见 [docs/architecture.md](docs/architecture.md)。
+
+## 主要输出
+
+默认 demo 写入 `outputs/mock_rgbd_demo/`：
+
+```text
+fused_pointcloud.ply
+hand_pointcloud.ply
+object_pointcloud.ply
+pose_output.json
+quality_report.json
+summary.json
+scale/root_translation_optimized_hands.npz
+kr3/hand_result.npz
+```
+
+质量门禁关注有效深度视角、融合点数、hand/object 点数、覆盖率、包围盒范围和
+mock pose 置信度。默认配置下业务输出仍保持 4 个视角和 3335 个融合点。
+
+NPZ 字符串字段使用普通 Unicode 数组，公共 loader 固定 `allow_pickle=False`，不会
+反序列化 Python object。mock KR3 结果明确标记为 `source_system=synthetic_mock`，并
+写入场景时间戳；真实系统可使用 `ground_truth_system`、`dma_vision` 或
+`super_labelator`。
+
+## 软件集成
 
 ```python
 from pathlib import Path
@@ -21,229 +114,53 @@ result = run_mock_reconstruction(
     output_dir=Path("outputs/mock_rgbd_demo"),
     hand_side="right",
 )
-hand_result = load_hand_result_npz(result.output_paths["kr3_hand_result"])
-assert validate_hand_result(hand_result) == []
+payload = load_hand_result_npz(result.output_paths["kr3_hand_result"])
+assert validate_hand_result(payload) == []
+
 generate_mock_visual_report(
     demo_dir=result.output_dir,
     output_html=Path("outputs/reports/hand_reconstruction_visual_report.html"),
 )
 ```
 
-详细说明见 [docs/integration/software_integration.md](docs/integration/software_integration.md)，迁移说明见 [docs/integration/migration_to_software_module.md](docs/integration/migration_to_software_module.md)。
+不要让业务代码直接 import `scripts/*.py`，也不要把 `outputs/` 或 HTML 展示文本当作
+稳定机器接口。更完整的集成说明见
+[docs/integration/software_integration.md](docs/integration/software_integration.md)。
 
-## 快速开始
+## 配置、日志与错误
 
-新同事 clone 后，如果希望一条命令创建虚拟环境、安装依赖并完成 KR1 验收，运行：
+`configs/mock_rgbd.json` 是可运行配置，而不只是示例。支持字段：
 
-```bash
-bash scripts/bootstrap_kr1_demo.sh
-```
+- `scene_dir`、`output_dir`
+- `voxel_size_m`
+- `hand_side`
+- `overwrite_mock_data`
+- `depth_unit`（当前仅支持 `meter`）
+- `mask_labels`（当前契约为 background=0、hand=1、object=2）
 
-如果本机已经安装好 `requirements.txt` 里的依赖，可直接运行轻量验收脚本：
-
-```bash
-bash scripts/run_kr1_checks.sh
-```
-
-该脚本会依次执行：
-
-```bash
-python3 demo/run_mock_rgbd_pipeline.py --output-dir outputs/mock_rgbd_demo
-python3 -m pytest tests/test_mock_rgbd_pipeline.py
-python3 scripts/run_icp_registration.py --selftest
-```
-
-## 工程规范
-
-- 目录职责见 [docs/project_structure.md](docs/project_structure.md)。
-- 软件集成说明见 [docs/integration/software_integration.md](docs/integration/software_integration.md)。
-- 从实验脚本到软件模块的迁移说明见 [docs/integration/migration_to_software_module.md](docs/integration/migration_to_software_module.md)。
-- mock RGB-D 输入输出格式见 [docs/mock_rgbd_io_schema.md](docs/mock_rgbd_io_schema.md)。
-- `root_translation_optimized_hands.npz` 字段说明见 [docs/root_translation_optimized_hands_npz_schema.md](docs/root_translation_optimized_hands_npz_schema.md)。
-- KR3 手部结果接口和架构预留见 [docs/kr3_hand_result_interface.md](docs/kr3_hand_result_interface.md)。
-- KR1/KR3 周报交付报告见 [docs/reports/kr1_delivery_report.md](docs/reports/kr1_delivery_report.md) 和 [docs/reports/kr3_delivery_report.md](docs/reports/kr3_delivery_report.md)。
-- 重建精度闭环方案见 [docs/reconstruction_accuracy_closed_loop.md](docs/reconstruction_accuracy_closed_loop.md)。
-- KR 提交交付规范见 [docs/kr_delivery_submission_guideline.md](docs/kr_delivery_submission_guideline.md)。
-- 多智能体协同和一次性闭环任务指令见 [docs/multi_agent_closed_loop_task.md](docs/multi_agent_closed_loop_task.md)。
-- gitee 初始化/同步步骤见 [docs/gitee_sync.md](docs/gitee_sync.md)。
-- `data/`、`outputs/` 和自动生成的 `mock_data/rgbd_scene_001/` 不提交到代码仓库。
-- `.gitignore` 已配置真实大数据、生成结果、虚拟环境和 Python 缓存。
-
-## 代码分层
-
-```text
-src/hand_recon/
-  api.py          # 稳定软件集成入口
-  core/           # 点云、RGB-D、ICP、几何基础能力
-  io/             # PLY/NPZ/JSON/scene 读写入口
-  pipelines/      # mock RGB-D、Re:InterHand 等可组合流程
-  adapters/       # 外部系统和统一 hand result 格式适配
-  reports/        # HTML 报告生成
-  interfaces/     # schema 相关接口定义
-```
-
-`demo/` 和 `scripts/` 保留为命令行入口，但核心逻辑应沉到 `src/hand_recon/`。
-
-## 上传版本
-
-生成不含真实数据和运行产物的上传包：
+未知字段、非法单位、非正体素、路径越界、坏 JSON/NPY/NPZ 和不一致的 KR3 字段会
+返回可定位错误。CLI 日志级别可用全局参数控制：
 
 ```bash
-bash scripts/create_upload_package.sh
+PYTHONPATH=src python3 -m hand_recon --log-level DEBUG demo --config configs/mock_rgbd.json
 ```
 
-输出位于 `dist/rgbd_hand_object_recon_upload_*.tar.gz`，包内保留源码、脚本、配置、文档、测试和 `mock_data/.gitkeep`，排除 `data/`、`outputs/`、`mock_data/rgbd_scene_001/`、`.git/`、虚拟环境和缓存。
+## Re:InterHand 与 ICP
 
-## 当前结论
-
-优先数据集建议选 **Re:InterHand** 做 pilot：
-
-- 它提供多视角 RGB、mask、camera parameters，以及完整手部 3D mesh/ MANO fits。
-- `Mugsy_cameras/envmap_per_frame` 是 20 个第三人称相机，适合验证“比 8 视角更完整覆盖”的流程。
-- 它不是原生 RGB-D；后续 TSDF 阶段需要从 mesh/camera 渲染 depth，或先跑 RGB 多视角深度/MVS。
-
-备选：
-
-- **InterHand2.6M**：真实采集，80-140 个标定 RGB 相机，视角数量最多；但 RGB-only，对 TSDF 不够直接。
-- **Hand4K / Hand-3D-Studio**：15 个 4K DSLR 相机，有 3D joints/shape annotation，真实 RGB 质量高。
-- **HOT3D**：动态手-物交互，多视角 egocentric，适合后续动态点云播放，但不是外部 360 度手部扫描。
-- **ShichengChen multiviewDataset**：只有 4 个 RGB-D 视角，但直接给 depth、完整点云和外参，适合 TSDF/ICP sanity check。
-
-详细 SOP 和来源链接见 [docs/hand_reconstruction_sop.md](docs/hand_reconstruction_sop.md)。
-
-## KR1：mock 多视图 RGB-D 重建 demo
-
-当前已补一个不依赖真实相机数据的最小闭环：
-
-- 自动生成 4 视角 mock RGB-D 数据：`rgb.npy`、`depth.npy`、`mask.npy`、`cameras.json`。
-- 读取相机内参/外参，把 depth 反投影为 camera-frame 点云。
-- 根据 `camera_to_world` 融合到 world frame，并输出体素降采样点云。
-- 输出 hand/object 的 mock 位姿 JSON。
-- 输出质量评估 JSON，包括深度有效率、点数、覆盖率、bbox extent 和 pose confidence。
-
-一键运行：
-
-```bash
-python3 demo/run_mock_rgbd_pipeline.py --output-dir outputs/mock_rgbd_demo
-```
-
-如果 mock 场景不存在，demo 会自动生成 `mock_data/rgbd_scene_001/`。
-
-主要输出：
-
-- `outputs/mock_rgbd_demo/fused_pointcloud.ply`
-- `outputs/mock_rgbd_demo/hand_pointcloud.ply`
-- `outputs/mock_rgbd_demo/object_pointcloud.ply`
-- `outputs/mock_rgbd_demo/pose_output.json`
-- `outputs/mock_rgbd_demo/quality_report.json`
-- `outputs/mock_rgbd_demo/summary.json`
-- `outputs/mock_rgbd_demo/scale/root_translation_optimized_hands.npz`
-- `outputs/mock_rgbd_demo/kr3/hand_result.npz`
-- `outputs/mock_rgbd_demo/scale/accuracy_report.json`（运行精度闭环脚本后生成）
-
-mock RGB-D 输入输出 schema 见 [docs/mock_rgbd_io_schema.md](docs/mock_rgbd_io_schema.md)。
-
-精度闭环：
-
-```bash
-python3 scripts/evaluate_normalized_npz_accuracy.py \
-  --prediction-npz outputs/mock_rgbd_demo/scale/root_translation_optimized_hands.npz \
-  --output-json outputs/mock_rgbd_demo/scale/accuracy_report.json
-```
-
-测试：
-
-```bash
-python3 -m pytest tests/test_mock_rgbd_pipeline.py
-```
-
-## KR3：真值/DMA/super-labelator 接口预留
-
-当前已补一个面向周报展示的最小接口预留：
-
-- 统一手部结果 schema：`schemas/kr3/hand_result_schema.json`。
-- 统一 Python adapter 出口：`src/hand_recon/interfaces/hand_result.py`。
-- 主字段覆盖 22DOF、21 个 3D 关键点、mesh vertices/faces。
-- 预留 `ground_truth_system`、`dma_vision`、`super_labelator` 三类来源。
-- 预留 MANO 和 UmeTrack optional 字段。
-
-验收：
-
-```bash
-bash scripts/run_kr3_checks.sh
-```
-
-## 多智能体协同校验 HTML
-
-生成可用于周报展示的协同校验报告：
-
-```bash
-bash scripts/run_multi_agent_validation_report.sh
-```
-
-输出：
-
-```text
-outputs/reports/multi_agent_validation_report.html
-outputs/reports/multi_agent_validation_report.json
-```
-
-报告按代码与接口、Schema、测试与产物、文档与周报、验收视角五个智能体角色汇总证据和剩余风险。
-
-## 可视化 HTML 报告
-
-生成带点云、关键点、mesh 和关节角图的展示报告：
-
-```bash
-bash scripts/run_hand_visual_report.sh
-```
-
-输出：
-
-```text
-outputs/reports/hand_reconstruction_visual_report.html
-```
-
-使用本地最强 Re:InterHand pilot MANO mesh 数据生成真实 mesh/ICP 可视化报告：
-
-```bash
-bash scripts/run_best_data_visual_report.sh
-```
-
-输出：
-
-```text
-outputs/reports/best_data_reinterhand_visual_report.html
-outputs/reinterhand_best_right_sequence_icp/icp_summary.json
-```
-
-## 第一阶段：ICP
-
-已经准备好的 Re:InterHand pilot：
-
-- Capture: `m--20221215--0949--RNS217--pilot--ProjectGoliathScript--Hands--two-hands`
-- Metadata: `data/reinterhand/.../{CHECKSUM,frame_list.txt,frame_list_orig.txt}`
-- MANO meshes: `data/reinterhand/.../mano_fits/meshes`
-- Mugsy 20 相机参数: `data/reinterhand/.../Mugsy_cameras/cam_params.json`
-- Summary: `outputs/reinterhand_pilot_summary.json`
-
-下载/恢复/校验/解压命令：
+选择性下载/校验 pilot：
 
 ```bash
 python3 scripts/prepare_reinterhand_pilot.py \
-  --skip-metadata \
   --download-mano \
   --download-mugsy-cam-params \
   --extract-mano
 ```
 
-可运行自测：
+解压前会检查上游 MD5（兼容上游清单，不代表密码学来源认证），并拒绝路径穿越、
+链接和特殊文件。完整的上游下载清单位于 `third_party/reinterhand_download/`，其本地
+安全包装不再使用 shell 拼接。
 
-```bash
-python3 scripts/run_icp_registration.py --selftest
-```
-
-对真实点云运行：
+对任意点云运行 ICP：
 
 ```bash
 python3 scripts/run_icp_registration.py \
@@ -253,55 +170,41 @@ python3 scripts/run_icp_registration.py \
   --distance-threshold-m 0.035
 ```
 
-如果已有相机外参或上一帧位姿，可用 JSON 给每个 source 一个 4x4 初值：
+支持 `.ply`、`.npy` 和 `.npz`，也可用 `--init-transforms-json` 提供 4×4 初值。
+
+## 验收与 CI
 
 ```bash
-python3 scripts/run_icp_registration.py \
-  --target target_cloud.ply \
-  --source source_view_01.ply \
-  --init-transforms-json init_transforms.json
+python3 -m pytest -q
+bash scripts/run_kr1_checks.sh
+bash scripts/run_kr3_checks.sh
+PYTHONPATH=src python3 -m hand_recon verify
 ```
 
-Re:InterHand 的 MANO mesh 是毫米单位，运行 ICP 时用 `--input-scale 0.001` 转成米：
+`make check` 额外运行 Ruff 和源码编译。GitHub Actions 在 Python 3.10 与 3.12 上执行
+相同质量门禁。
 
-```bash
-cap='m--20221215--0949--RNS217--pilot--ProjectGoliathScript--Hands--two-hands'
-python3 scripts/run_icp_registration.py \
-  --target "data/reinterhand/$cap/mano_fits/meshes/100001_right.ply" \
-  --source "data/reinterhand/$cap/mano_fits/meshes/100004_right.ply" \
-  --output-dir outputs/reinterhand_icp_pilot_right_100001_100004 \
-  --input-scale 0.001 \
-  --voxel-size-m 0.001 \
-  --distance-threshold-m 0.03 \
-  --trim-fraction 0.9 \
-  --min-pairs 100 \
-  --max-iterations 80
-```
+## 数据与能力边界
 
-当前真实 mesh ICP 结果：
+- `data/`、`outputs/`、`dist/`、虚拟环境和缓存不会提交。
+- 相机输入必须提供 meter 深度和 `camera_to_world`；当前没有自动单位换算。
+- mock pose 是点云包围盒质心，mock joints/mesh 是确定性几何占位。
+- KR3 MANO/UmeTrack optional 字段目前为接口预留，不代表 SDK 已接入。
+- 点到点 ICP 依赖合理初值，低重叠、对称形状和强遮挡仍可能落入局部最优。
+- Open3D/TSDF 尚未成为运行依赖。
 
-- status: `converged`
-- iterations: `4`
-- mean error: `6.93e-05 m` (`0.069 mm`)
-- RMSE: `7.87e-05 m` (`0.079 mm`)
-- fitness: `0.901`
+## 文档索引
 
-输出：
+- [首次运行](START_HERE.md)
+- [架构与核心流程](docs/architecture.md)
+- [目录职责](docs/project_structure.md)
+- [mock RGB-D I/O](docs/mock_rgbd_io_schema.md)
+- [normalized hand NPZ](docs/root_translation_optimized_hands_npz_schema.md)
+- [KR3 hand result](docs/kr3_hand_result_interface.md)
+- [KR3 machine-readable schema](schemas/kr3/hand_result_schema.json)
+- [软件集成](docs/integration/software_integration.md)
+- [重建精度闭环](docs/reconstruction_accuracy_closed_loop.md)
+- [手部重建 SOP](docs/hand_reconstruction_sop.md)
 
-- `aligned_*.ply`：每个 source 对齐到 target 后的点云。
-- `merged_aligned_voxel.ply`：合并后体素降采样点云。
-- `icp_summary.json`：每个 source 的 4x4 transform、残差、fitness、迭代历史。
-
-## 与 0401 的对应关系
-
-`0401_grundture` 中可复用的主线：
-
-- `scripts/reconstruct_dexycb_hand_pointcloud.py`：分割 depth 反投影到 shared frame，导出 fused hand point cloud。
-- `scripts/run_dexycb_tsdf_fusion_pipeline.py`：Open3D `ScalableTSDFVolume` 融合 hand-masked depth，导出 mesh。
-- `src/grundture/geometry/pointcloud_section.py` 和 `mesh_section.py`：后续做手指截面/环中心的几何工具。
-
-本工程的计划是：
-
-1. ICP 配准：已放入 `src/hand_recon/icp.py` 和 `scripts/run_icp_registration.py`。
-2. TSDF 融合：下一阶段接 Open3D，把多视角 depth 或从 mesh 渲染出的 depth 融合成 mesh。
-3. 手部重建/动态播放：静态输出 PLY/mesh；多帧时输出 per-frame PLY 和一个点云播放 HTML。
+历史 KR 报告保留在 `docs/reports/`，用于追溯当时状态；当前命令、字段和测试结果以
+本 README、schema 与自动化测试为准。

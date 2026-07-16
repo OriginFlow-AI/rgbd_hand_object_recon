@@ -7,7 +7,8 @@ out to scripts.
 
 from __future__ import annotations
 
-import json
+import logging
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -15,11 +16,15 @@ from typing import Any
 from hand_recon.evaluation import evaluate_quality
 from hand_recon.icp import write_ascii_ply
 from hand_recon.interfaces.hand_result import build_kr3_hand_result_from_normalized, write_kr3_hand_result_npz
+from hand_recon.io.json_io import write_json
 from hand_recon.mock_data import LABEL_HAND, LABEL_OBJECT, generate_mock_rgbd_scene
 from hand_recon.normalized_output import build_normalized_hand_npz_payload, write_normalized_hand_npz
 from hand_recon.pose import generate_pose_output
 from hand_recon.reconstruction import ReconstructionResult, reconstruct_multiview_pointcloud
 from hand_recon.rgbd import load_mock_rgbd_scene
+from hand_recon.time_utils import parse_iso8601_ns
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -52,10 +57,13 @@ def run_mock_rgbd_pipeline(
 
     if hand_side not in {"left", "right"}:
         raise ValueError(f"hand_side must be 'left' or 'right', got {hand_side!r}")
+    if not math.isfinite(voxel_size_m) or voxel_size_m <= 0:
+        raise ValueError(f"voxel_size_m must be greater than zero, got {voxel_size_m}")
 
     scene_dir = Path(scene_dir)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    LOGGER.info("starting mock reconstruction: scene=%s output=%s", scene_dir, output_dir)
 
     if overwrite_mock_data or not (scene_dir / "cameras.json").exists():
         generate_mock_rgbd_scene(scene_dir, overwrite=overwrite_mock_data)
@@ -101,7 +109,8 @@ def run_mock_rgbd_pipeline(
     write_normalized_hand_npz(output_paths["root_translation_optimized_hands"], normalized_payload)
     kr3_payload = build_kr3_hand_result_from_normalized(
         normalized_payload,
-        source_system="super_labelator",
+        source_system="synthetic_mock",
+        timestamp_ns=parse_iso8601_ns(metadata["timestamp"]),
         track_id=f"{hand_side}_hand_0",
     )
     write_kr3_hand_result_npz(output_paths["kr3_hand_result"], kr3_payload)
@@ -116,6 +125,11 @@ def run_mock_rgbd_pipeline(
         "quality_passed": bool(quality_report["passed"]),
     }
     write_json(output_paths["summary"], summary)
+    LOGGER.info(
+        "mock reconstruction finished: status=%s fused_points=%d",
+        summary["status"],
+        fused_result.fused_points.shape[0],
+    )
 
     return MockRgbdPipelineResult(
         status=summary["status"],
@@ -142,8 +156,3 @@ def build_mock_output_paths(output_dir: Path) -> dict[str, Path]:
         "root_translation_optimized_hands": output_dir / "scale" / "root_translation_optimized_hands.npz",
         "kr3_hand_result": output_dir / "kr3" / "hand_result.npz",
     }
-
-
-def write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

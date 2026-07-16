@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-python3 scripts/run_icp_registration.py \
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+
+"$PYTHON_BIN" scripts/run_icp_registration.py \
   --inputs \
   data/reinterhand/m--20221215--0949--RNS217--pilot--ProjectGoliathScript--Hands--two-hands/mano_fits/meshes/100001_right.ply \
   data/reinterhand/m--20221215--0949--RNS217--pilot--ProjectGoliathScript--Hands--two-hands/mano_fits/meshes/100004_right.ply \
@@ -17,7 +21,7 @@ python3 scripts/run_icp_registration.py \
   --trim-fraction 0.9 \
   --min-pairs 100
 
-python3 scripts/generate_best_data_visual_report.py \
+"$PYTHON_BIN" scripts/generate_best_data_visual_report.py \
   --icp-dir outputs/reinterhand_best_right_sequence_icp \
   --output-html outputs/reports/best_data_reinterhand_visual_report.html
 

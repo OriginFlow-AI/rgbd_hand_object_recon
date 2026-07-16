@@ -119,7 +119,7 @@ def evaluate_prediction(
 
 
 def _load_npz(path: Path) -> dict[str, np.ndarray]:
-    with np.load(path, allow_pickle=True) as data:
+    with np.load(path, allow_pickle=False) as data:
         return {key: data[key] for key in data.files}
 
 
@@ -217,7 +217,12 @@ def _reference_metrics(data: dict[str, np.ndarray], reference: dict[str, np.ndar
 
 
 def _match_rows(data: dict[str, np.ndarray], reference: dict[str, np.ndarray]) -> tuple[list[int], list[int]]:
-    if "frame_index" not in data or "hand_side" not in data or "frame_index" not in reference or "hand_side" not in reference:
+    if (
+        "frame_index" not in data
+        or "hand_side" not in data
+        or "frame_index" not in reference
+        or "hand_side" not in reference
+    ):
         n = min(
             int(np.asarray(data.get("joints_3d_left_m", [])).shape[0]),
             int(np.asarray(reference.get("joints_3d_left_m", [])).shape[0]),
@@ -225,11 +230,11 @@ def _match_rows(data: dict[str, np.ndarray], reference: dict[str, np.ndarray]) -
         return list(range(n)), list(range(n))
 
     lookup = {}
-    for idx, (frame_index, hand_side) in enumerate(zip(reference["frame_index"], reference["hand_side"])):
+    for idx, (frame_index, hand_side) in enumerate(zip(reference["frame_index"], reference["hand_side"], strict=False)):
         lookup[(int(frame_index), int(hand_side))] = idx
     pred_rows = []
     ref_rows = []
-    for idx, (frame_index, hand_side) in enumerate(zip(data["frame_index"], data["hand_side"])):
+    for idx, (frame_index, hand_side) in enumerate(zip(data["frame_index"], data["hand_side"], strict=False)):
         key = (int(frame_index), int(hand_side))
         if key in lookup:
             pred_rows.append(idx)

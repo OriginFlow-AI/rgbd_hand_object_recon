@@ -11,6 +11,7 @@ from hand_recon.adapters.hand_result import (
     validate_hand_result,
     write_hand_result_npz,
 )
+from hand_recon.io.npz import load_npz_arrays
 from hand_recon.pipelines.mock_rgbd import MockRgbdPipelineResult, run_mock_rgbd_pipeline
 from hand_recon.pipelines.reinterhand import ReinterHandIcpResult, run_reinterhand_best_right_icp
 from hand_recon.reports.best_data_visual import generate_best_data_visual_report
@@ -37,10 +38,14 @@ def run_mock_reconstruction(
 
 
 def load_hand_result_npz(path: Path) -> dict[str, np.ndarray]:
-    """Load a unified hand result NPZ into an in-memory payload dictionary."""
+    """Safely load a unified hand result NPZ into memory.
 
-    with np.load(path, allow_pickle=True) as data:
-        return {key: data[key] for key in data.files}
+    Python object arrays are intentionally rejected because they require pickle
+    deserialization. Hand-result files emitted by this package use only numeric,
+    boolean, and Unicode arrays.
+    """
+
+    return load_npz_arrays(path)
 
 
 def generate_mock_visual_report(

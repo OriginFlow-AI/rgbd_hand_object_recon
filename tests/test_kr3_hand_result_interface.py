@@ -1,15 +1,11 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
-
-from hand_recon.interfaces.hand_result import (  # noqa: E402
+from hand_recon.interfaces.hand_result import (
     HAND_RESULT_SCHEMA_VERSION,
     SOURCE_SYSTEMS,
     UMETRACK_ANGLE_NAMES_22DOF,
@@ -17,10 +13,12 @@ from hand_recon.interfaces.hand_result import (  # noqa: E402
     validate_kr3_hand_result,
     write_kr3_hand_result_npz,
 )
-from hand_recon.mock_data import LABEL_HAND, generate_mock_rgbd_scene  # noqa: E402
-from hand_recon.normalized_output import build_normalized_hand_npz_payload  # noqa: E402
-from hand_recon.reconstruction import reconstruct_multiview_pointcloud  # noqa: E402
-from hand_recon.rgbd import load_mock_rgbd_scene  # noqa: E402
+from hand_recon.mock_data import LABEL_HAND, generate_mock_rgbd_scene
+from hand_recon.normalized_output import build_normalized_hand_npz_payload
+from hand_recon.reconstruction import reconstruct_multiview_pointcloud
+from hand_recon.rgbd import load_mock_rgbd_scene
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_kr3_hand_result_interface_from_mock_pipeline(tmp_path: Path) -> None:
@@ -58,10 +56,10 @@ def test_kr3_hand_result_interface_from_mock_pipeline(tmp_path: Path) -> None:
 
     output_path = tmp_path / "kr3" / "hand_result.npz"
     write_kr3_hand_result_npz(output_path, kr3_payload)
-    loaded = np.load(output_path, allow_pickle=True)
-    assert loaded["hand_angles_22dof_rad"].shape == (1, 22)
-    assert loaded["joints_3d_m"].shape == (1, 21, 3)
-    assert loaded["mesh_vertices_m"].shape == kr3_payload["mesh_vertices_m"].shape
+    with np.load(output_path, allow_pickle=False) as loaded:
+        assert loaded["hand_angles_22dof_rad"].shape == (1, 22)
+        assert loaded["joints_3d_m"].shape == (1, 21, 3)
+        assert loaded["mesh_vertices_m"].shape == kr3_payload["mesh_vertices_m"].shape
 
 
 def test_kr3_schema_lists_weekly_report_fields() -> None:
@@ -76,3 +74,39 @@ def test_kr3_schema_lists_weekly_report_fields() -> None:
     assert schema["properties"]["hand_angles_22dof_rad"]["x-npz-shape"] == ["N", 22]
     assert schema["properties"]["joints_3d_m"]["x-npz-shape"] == ["N", 21, 3]
     assert schema["properties"]["mesh_vertices_m"]["x-npz-shape"] == ["N", "V", 3]
+    assert "synthetic_mock" in schema["properties"]["source_system"]["items"]["enum"]
+    assert schema["properties"]["provenance_json"]["x-npz-dtype"] == "unicode"
+
+
+def test_kr3_validation_reports_inconsistent_values_without_crashing(tmp_path: Path) -> None:
+    scene_dir = tmp_path / "scene"
+    generate_mock_rgbd_scene(scene_dir, view_count=2)
+    scene = load_mock_rgbd_scene(scene_dir)
+    hand_result = reconstruct_multiview_pointcloud(scene, labels=[LABEL_HAND], voxel_size_m=0.003)
+    normalized = build_normalized_hand_npz_payload(scene, hand_result.fused_points)
+    payload = build_kr3_hand_result_from_normalized(normalized)
+
+    malformed = dict(payload)
+    malformed["schema_version"] = np.array([HAND_RESULT_SCHEMA_VERSION])
+    malformed["provenance_json"] = np.array("not-json")
+    errors = validate_kr3_hand_result(malformed)
+
+    assert "schema_version expected (), got (1,)" in errors
+    assert "provenance_json expected (1,), got ()" in errors
+
+    inconsistent = dict(payload)
+    inconsistent["is_right"] = np.array([False])
+    assert "hand_side and is_right contain inconsistent values" in validate_kr3_hand_result(inconsistent)
+
+
+def test_kr3_adapter_does_not_truncate_track_id(tmp_path: Path) -> None:
+    scene_dir = tmp_path / "scene"
+    generate_mock_rgbd_scene(scene_dir, view_count=2)
+    scene = load_mock_rgbd_scene(scene_dir)
+    hand_result = reconstruct_multiview_pointcloud(scene, labels=[LABEL_HAND], voxel_size_m=0.003)
+    normalized = build_normalized_hand_npz_payload(scene, hand_result.fused_points)
+    track_id = "track-" + "x" * 100
+
+    payload = build_kr3_hand_result_from_normalized(normalized, track_id=track_id)
+
+    assert payload["track_id"].tolist() == [track_id]

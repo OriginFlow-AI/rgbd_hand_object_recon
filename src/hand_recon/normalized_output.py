@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
 from hand_recon.icp import apply_transform
+from hand_recon.io.npz import write_npz_arrays
 from hand_recon.rgbd import RgbdScene
 
 JOINT_NAMES = np.array(
@@ -161,18 +161,18 @@ def build_normalized_hand_npz_payload(
         "anchor_mask": anchor_mask,
         "visible_anchor_mask": anchor_mask.copy(),
         "anchor_confidence": anchor_confidence,
-        "anchor_confidence_source": np.array("anchor_mask_placeholder", dtype=object),
+        "anchor_confidence_source": np.array("anchor_mask_placeholder", dtype=np.str_),
         "frame_confidence": frame_confidence,
         "frame_status": np.array([status], dtype="<U16"),
-        "scale_meta_json": np.array(json.dumps(scale_meta, ensure_ascii=False), dtype=object),
-        "summary_json": np.array([json.dumps(summary, ensure_ascii=False)], dtype=object),
+        "scale_meta_json": np.array(json.dumps(scale_meta, ensure_ascii=False), dtype=np.str_),
+        "summary_json": np.array([json.dumps(summary, ensure_ascii=False)], dtype=np.str_),
     }
 
 
 def write_normalized_hand_npz(path: Path, payload: dict[str, np.ndarray]) -> None:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(path, **payload)
+    """Atomically write a normalized payload without pickle-backed arrays."""
+
+    write_npz_arrays(path, payload)
 
 
 def estimate_mock_21_joints(points: np.ndarray) -> np.ndarray:

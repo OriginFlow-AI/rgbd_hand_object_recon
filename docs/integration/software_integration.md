@@ -82,7 +82,7 @@ run_reinterhand_best_data_visualization(
 | `joints_3d_m` | `(N, 21, 3)` | 21 个 3D 手部关键点。 |
 | `mesh_vertices_m` | `(N, V, 3)` | 手部 mesh 顶点。 |
 | `mesh_faces` | `(F, 3)` | mesh 面片拓扑。 |
-| `source_system` | `(N,)` | `ground_truth_system` / `dma_vision` / `super_labelator`。 |
+| `source_system` | `(N,)` | 真实系统三类值，或仅用于测试的 `synthetic_mock`。 |
 
 机器可读 schema：
 
@@ -101,6 +101,6 @@ schemas/kr3/hand_result_schema.json
 
 ```bash
 python3 -m pytest
-python3 demo/run_mock_rgbd_pipeline.py --output-dir outputs/mock_rgbd_demo
+PYTHONPATH=src python3 -m hand_recon demo --config configs/mock_rgbd.json
 bash scripts/run_best_data_visual_report.sh
 ```

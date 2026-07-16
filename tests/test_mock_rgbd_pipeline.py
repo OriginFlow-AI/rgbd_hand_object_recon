@@ -1,13 +1,9 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
-
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
 
 from hand_recon.evaluation import evaluate_quality
 from hand_recon.mock_data import LABEL_HAND, LABEL_OBJECT, generate_mock_rgbd_scene
@@ -100,6 +96,6 @@ def test_mock_rgbd_pipeline(tmp_path: Path) -> None:
 
     normalized_path = tmp_path / "scale" / "root_translation_optimized_hands.npz"
     write_normalized_hand_npz(normalized_path, normalized)
-    loaded = np.load(normalized_path, allow_pickle=True)
-    assert set(normalized).issubset(set(loaded.files))
-    assert loaded["joints_3d_left_m"].shape == (1, 21, 3)
+    with np.load(normalized_path, allow_pickle=False) as loaded:
+        assert set(normalized).issubset(set(loaded.files))
+        assert loaded["joints_3d_left_m"].shape == (1, 21, 3)

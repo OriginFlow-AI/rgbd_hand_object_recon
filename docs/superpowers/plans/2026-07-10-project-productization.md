@@ -1,5 +1,9 @@
 # RGB-D 手物重建工程产品化实施计划
 
+> **历史规划文档：** 其中部分工程规范与安全修复已实施，但 analysis 子域、数据采集扩展、
+> Git 重建和远端操作不属于当前可运行工程，也未由本次整理执行。当前状态与命令以根目录
+> README、schema 和测试为准；不要把下列未勾选步骤当作自动执行指令。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把现有演示工程升级为可安装、可运行、可集成、可量化且能输出时间对齐与 pose 检出率可视化结果的标准 Python 项目。
